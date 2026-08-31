@@ -1,12 +1,51 @@
 import express from 'express'
 import path from 'node:path'
 import fs from 'node:fs'
+import mqtt from 'mqtt'
 import { fileURLToPath } from 'node:url'
 
 const app = express()
 const root = path.dirname(fileURLToPath(import.meta.url))
 const frontendDist = path.join(root, '..', 'frontend', 'dist')
 const port = Number(process.env.PORT || 5000)
+const mqttDeviceId = process.env.MQTT_DEVICE_ID || 'robot-arm-01'
+const commandTopic = `robot-arm/${mqttDeviceId}/command`
+const statusTopic = `robot-arm/${mqttDeviceId}/status`
+let mqttClient = null
+let mqttOnline = false
+let deviceStatus = { online: false, lastSeen: 0 }
+
+if (process.env.MQTT_URL) {
+  mqttClient = mqtt.connect(process.env.MQTT_URL, {
+    username: process.env.MQTT_USERNAME,
+    password: process.env.MQTT_PASSWORD,
+    clientId: `render-api-${mqttDeviceId}-${Math.random().toString(16).slice(2, 8)}`,
+    reconnectPeriod: 3000,
+    connectTimeout: 10000,
+  })
+  mqttClient.on('connect', () => {
+    mqttOnline = true
+    mqttClient.subscribe(statusTopic, { qos: 1 })
+    console.log(`[MQTT] Connected; subscribed to ${statusTopic}`)
+  })
+  mqttClient.on('reconnect', () => { mqttOnline = false })
+  mqttClient.on('close', () => { mqttOnline = false })
+  mqttClient.on('error', error => console.error('[MQTT]', error.message))
+  mqttClient.on('message', (topic, payload) => {
+    if (topic !== statusTopic) return
+    try {
+      const status = JSON.parse(payload.toString())
+      deviceStatus = { ...status, online: status.online === true, lastSeen: Date.now() }
+    } catch { deviceStatus = { online: payload.toString() === 'online', lastSeen: Date.now() } }
+  })
+}
+
+function publishCommand(command) {
+  return new Promise((resolve, reject) => {
+    if (!mqttClient || !mqttOnline) return reject(new Error('MQTT broker is offline'))
+    mqttClient.publish(commandTopic, command, { qos: 1 }, error => error ? reject(error) : resolve())
+  })
+}
 
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', process.env.FRONTEND_ORIGIN || '*')
@@ -44,7 +83,12 @@ app.get('/api/mobile-frame', async (req, res) => {
 app.get('/api/control', async (req, res) => {
   const base = httpUrl(req.query.controller)
   const pattern = String(req.query.pattern || ''), dir = String(req.query.dir || '')
-  if (!base || !/^[01],[01],[01],[01],[01]$/.test(pattern) || !/^(left|right|center)$/.test(dir)) return res.status(400).json({ error: 'Invalid request' })
+  if (!/^[01],[01],[01],[01],[01]$/.test(pattern) || !/^(left|right|center)$/.test(dir)) return res.status(400).json({ error: 'Invalid request' })
+  if (mqttClient) {
+    try { await publishCommand(`gesture|${pattern}|${dir}`); return res.status(202).json({ ok: true, transport: 'mqtt' }) }
+    catch (error) { return res.status(503).json({ ok: false, error: error.message }) }
+  }
+  if (!base) return res.status(400).json({ error: 'Invalid controller URL' })
   const target = new URL('/control', base); target.searchParams.set('pattern', pattern); target.searchParams.set('dir', dir)
   try {
     const response = await fetch(target, { signal: AbortSignal.timeout(7000) })
@@ -53,6 +97,10 @@ app.get('/api/control', async (req, res) => {
 })
 
 app.get('/api/device-status', async (req, res) => {
+  if (mqttClient) {
+    const fresh = Date.now() - deviceStatus.lastSeen < 15000
+    return res.set('Cache-Control', 'no-store').json({ ...deviceStatus, online: mqttOnline && deviceStatus.online && fresh, broker: mqttOnline, transport: 'mqtt' })
+  }
   const target = httpUrl(req.query.controller)
   if (!target) return res.status(400).json({ online: false, error: 'Invalid controller URL' })
   try {
@@ -68,9 +116,14 @@ app.get('/api/device-status', async (req, res) => {
 app.get('/api/servo', async (req, res) => {
   const controller = httpUrl(req.query.controller)
   const angles = ['base', 'shoulder', 'elbow'].map(name => Number(req.query[name]))
-  if (!controller || angles.some(value => !Number.isInteger(value) || value < 0 || value > 180)) {
+  if (angles.some(value => !Number.isInteger(value) || value < 0 || value > 180)) {
     return res.status(400).json({ ok: false, error: 'Controller and angles 0-180 are required' })
   }
+  if (mqttClient) {
+    try { await publishCommand(`servo|${angles.join('|')}`); return res.status(202).json({ ok: true, transport: 'mqtt' }) }
+    catch (error) { return res.status(503).json({ ok: false, error: error.message }) }
+  }
+  if (!controller) return res.status(400).json({ ok: false, error: 'Invalid controller URL' })
   const target = new URL('/servo', controller)
   ;['base', 'shoulder', 'elbow'].forEach((name, index) => target.searchParams.set(name, String(angles[index])))
   try {

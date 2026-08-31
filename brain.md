@@ -51,6 +51,10 @@ Frontend প্রতি ৩ সেকেন্ডে backend-এর `/api/devic
 
 Dashboard-এর Base, Shoulder ও Elbow slider `0–180°` value নেয়। `Move servos` backend-এর `/api/servo` call করে এবং backend ESP8266-এর `/servo?base=90&shoulder=90&elbow=90` endpoint-এ পাঠায়। ESP8266 smooth movement শেষে JSON response দেয়। Button কেবল device connected থাকলে enabled হয়।
 
+## MQTT cloud transport
+
+Backend-এ `MQTT_URL` থাকলে HTTP LAN transport-এর বদলে MQTT ব্যবহার হয়। Gesture payload `gesture|0,1,0,0,0|right` এবং manual payload `servo|90|90|90` হিসেবে `robot-arm/<device-id>/command` topic-এ QoS 1-এ publish হয়। ESP8266 `robot-arm/<device-id>/status` topic-এ retained online state ও প্রতি ৫ সেকেন্ডে heartbeat publish করে। Backend ১৫ সেকেন্ড heartbeat না পেলে device offline দেখায়। `MQTT_URL` না থাকলে local HTTP fallback আগের মতো কাজ করে।
+
 ## চালানোর নিয়ম
 
 ```powershell

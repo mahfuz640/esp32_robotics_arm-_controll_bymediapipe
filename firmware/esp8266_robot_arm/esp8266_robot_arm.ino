@@ -1,9 +1,13 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <Servo.h>
+#include <WiFiClientSecureBearSSL.h>
+#include <PubSubClient.h>
 #include "secrets.h"
 
 ESP8266WebServer server(80);
+BearSSL::WiFiClientSecure mqttNetwork;
+PubSubClient mqtt(mqttNetwork);
 Servo servoBase, servoShoulder, servoElbow;
 
 const uint8_t BASE_PIN = D1;      // GPIO5
@@ -14,6 +18,10 @@ int basePos = 90, shoulderPos = 90, elbowPos = 90;
 bool wifiWasConnected = false;
 unsigned long lastStatusPrint = 0;
 unsigned long lastReconnect = 0;
+unsigned long lastMqttReconnect = 0;
+unsigned long lastHeartbeat = 0;
+String mqttCommandTopic;
+String mqttStatusTopic;
 
 void smoothMove(Servo &servo, int &currentPos, int targetPos) {
   targetPos = constrain(targetPos, 0, 180);
@@ -141,6 +149,66 @@ void handleSerial() {
   } else Serial.println("[SERIAL] Invalid pattern");
 }
 
+void publishMqttStatus(bool online) {
+  if (!mqtt.connected()) return;
+  String payload = String("{\"online\":") + (online ? "true" : "false") +
+    ",\"base\":" + basePos + ",\"shoulder\":" + shoulderPos + ",\"elbow\":" + elbowPos + "}";
+  mqtt.publish(mqttStatusTopic.c_str(), payload.c_str(), true);
+}
+
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  String command;
+  for (unsigned int i = 0; i < length; i++) command += (char)payload[i];
+  Serial.print("[MQTT] Command: "); Serial.println(command);
+
+  if (command.startsWith("gesture|")) {
+    int separator = command.lastIndexOf('|');
+    String pattern = command.substring(8, separator);
+    String dir = command.substring(separator + 1);
+    int fingers[5];
+    if (separator > 8 && parsePattern(pattern, fingers)) applyGesture(fingers, dir);
+    else Serial.println("[MQTT] Invalid gesture command");
+  } else if (command.startsWith("servo|")) {
+    int first = command.indexOf('|', 6);
+    int second = command.indexOf('|', first + 1);
+    if (first > 6 && second > first) {
+      int targetBase = constrain(command.substring(6, first).toInt(), 0, 180);
+      int targetShoulder = constrain(command.substring(first + 1, second).toInt(), 0, 180);
+      int targetElbow = constrain(command.substring(second + 1).toInt(), 0, 180);
+      Serial.printf("[MQTT MANUAL] Base=%d Shoulder=%d Elbow=%d\n", targetBase, targetShoulder, targetElbow);
+      smoothMove(servoBase, basePos, targetBase);
+      smoothMove(servoShoulder, shoulderPos, targetShoulder);
+      smoothMove(servoElbow, elbowPos, targetElbow);
+    } else Serial.println("[MQTT] Invalid servo command");
+  } else Serial.println("[MQTT] Unknown command");
+  publishMqttStatus(true);
+}
+
+void maintainMqtt() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  if (!mqtt.connected()) {
+    if (millis() - lastMqttReconnect < 5000) return;
+    lastMqttReconnect = millis();
+    String clientId = String("esp8266-") + MQTT_DEVICE_ID + "-" + String(ESP.getChipId(), HEX);
+    Serial.print("[MQTT] Connecting to "); Serial.println(MQTT_HOST);
+    if (mqtt.connect(clientId.c_str(), MQTT_USERNAME, MQTT_PASSWORD,
+                     mqttStatusTopic.c_str(), 1, true, "{\"online\":false}")) {
+      Serial.println("[MQTT] ONLINE");
+      mqtt.subscribe(mqttCommandTopic.c_str(), 1);
+      Serial.print("[MQTT] Subscribed: "); Serial.println(mqttCommandTopic);
+      publishMqttStatus(true);
+    } else {
+      Serial.print("[MQTT] Failed, state="); Serial.println(mqtt.state());
+    }
+    return;
+  }
+  mqtt.loop();
+  if (millis() - lastHeartbeat >= 5000) {
+    lastHeartbeat = millis();
+    publishMqttStatus(true);
+  }
+}
+
 void printNetworkStatus() {
   bool connected = WiFi.status() == WL_CONNECTED;
   if (connected != wifiWasConnected) {
@@ -199,11 +267,18 @@ void setup() {
   server.on("/", HTTP_GET, []() { server.send(200, "text/plain", "Robot arm controller online"); });
   server.begin();
   Serial.println("[SERVER] HTTP SERVER ONLINE: port 80");
-  Serial.println("[READY] Waiting for commands...");
+  mqttCommandTopic = String("robot-arm/") + MQTT_DEVICE_ID + "/command";
+  mqttStatusTopic = String("robot-arm/") + MQTT_DEVICE_ID + "/status";
+  mqttNetwork.setInsecure(); // TLS encrypted; install broker CA cert for strict verification.
+  mqtt.setServer(MQTT_HOST, MQTT_PORT);
+  mqtt.setCallback(mqttCallback);
+  mqtt.setBufferSize(384);
+  Serial.println("[READY] Waiting for HTTP/MQTT commands...");
 }
 
 void loop() {
   server.handleClient();
   handleSerial();
   printNetworkStatus();
+  maintainMqtt();
 }
