@@ -59,6 +59,8 @@ ESP8266 status → MQTT broker → Render API → website
 
 `MQTT_DEVICE_ID` firmware ও Render-এ হুবহু একই হতে হবে। Firmware বর্তমানে encrypted TLS ব্যবহার করে কিন্তু certificate verification সহজ setup-এর জন্য disabled; production deployment-এ broker CA certificate pin করুন।
 
+Hosted frontend-এ ESP8266 URL/IP দিতে হয় না। `VITE_API_URL` থাকলে UI `Automatic · MQTT Cloud` দেখায় এবং backend MQTT heartbeat দিয়ে device auto-detect করে। Local HTTP fallback mode-এই কেবল ESP8266 URL field দেখা যায়।
+
 Render configuration সম্পর্কে বিস্তারিত: [Blueprint spec](https://render.com/docs/blueprint-spec) এবং [monorepo support](https://render.com/docs/monorepo-support)।
 
 ## Manual control

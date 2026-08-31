@@ -5,6 +5,7 @@ const MODEL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/h
 const WASM = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm'
 const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '')
 const apiUrl = path => `${API_BASE}${path}`
+const CLOUD_MQTT_MODE = Boolean(API_BASE)
 const LINKS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]]
 
 function fingerStates(p, hand) {
@@ -115,7 +116,7 @@ export default function App() {
 
   return <div className="app">
     <header><div><p className="eyebrow">ESP ROBOTICS LAB</p><h1>Vision Control Center</h1><p className="subtitle">Mobile IP camera, MediaPipe এবং ESP32 monitoring</p></div><div className="header-actions"><div className="gesture"><small>DETECTED</small><strong>{hasHand?`${fingers} FINGER${fingers===1?'':'S'}`:'NO HAND'}</strong></div><button className="icon-button" onClick={()=>setSettings(v=>!v)}>⚙ Settings</button></div></header>
-    {settings&&<form className="settings" onSubmit={save}><label>Mobile IP Camera<input value={mobileUrl} onChange={e=>setMobileUrl(e.target.value)} placeholder="http://PHONE_IP:8080/video"/></label><label>ESP8266 URL<input value={controllerUrl} onChange={e=>setControllerUrl(e.target.value)}/></label><label>ESP32-CAM stream<input value={monitorUrl} onChange={e=>setMonitorUrl(e.target.value)}/></label><button>Save</button></form>}
+    {settings&&<form className="settings" onSubmit={save}><label>Mobile IP Camera<input value={mobileUrl} onChange={e=>setMobileUrl(e.target.value)} placeholder="http://PHONE_IP:8080/video"/></label>{CLOUD_MQTT_MODE?<label>ESP8266 connection<input value="Automatic · MQTT Cloud" disabled/></label>:<label>ESP8266 URL<input value={controllerUrl} onChange={e=>setControllerUrl(e.target.value)}/></label>}<label>ESP32-CAM stream<input value={monitorUrl} onChange={e=>setMonitorUrl(e.target.value)}/></label><button>Save</button></form>}
     {error&&<div className="alert">{error}</div>}
     <main>
       <section className="camera-card"><div className="card-head"><div><span className="number">01</span><h2>Device Camera</h2><p>এই device-এর camera দিয়ে finger detection</p></div><Status online={running}>{running?'LIVE':'OFFLINE'}</Status></div><div className="viewport"><video ref={video} playsInline muted/><canvas ref={canvas}/>{!running&&<div className="empty"><span>✋</span><p>Camera বন্ধ আছে</p></div>}</div><div className="controls source-controls"><select value={mode} disabled={running} onChange={e=>setMode(e.target.value)}><option value="local">This device camera</option><option value="ip">Mobile IP Camera</option></select>{running?<button className="danger" onClick={stop}>Stop camera</button>:<button onClick={mode==='ip'?startIp:startLocal} disabled={loading}>{loading?'MediaPipe loading…':'Start device camera'}</button>}</div></section>
