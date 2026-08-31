@@ -4,3 +4,4 @@ dist/
 frontend/node_modules/
 backend/node_modules/
 frontend/dist/
+firmware/esp8266_robot_arm/secrets.h

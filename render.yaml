@@ -1,0 +1,31 @@
+services:
+  - type: web
+    runtime: node
+    name: esp8266-robot-arm-api-mahfuz
+    rootDir: backend
+    region: singapore
+    plan: free
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_VERSION
+        value: 22
+      - key: FRONTEND_ORIGIN
+        value: https://esp8266-robot-arm-ui-mahfuz.onrender.com
+
+  - type: web
+    runtime: static
+    name: esp8266-robot-arm-ui-mahfuz
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+    autoDeployTrigger: commit
+    envVars:
+      - key: VITE_API_URL
+        value: https://esp8266-robot-arm-api-mahfuz.onrender.com
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

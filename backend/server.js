@@ -1,11 +1,22 @@
 import express from 'express'
 import path from 'node:path'
+import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 const app = express()
 const root = path.dirname(fileURLToPath(import.meta.url))
 const frontendDist = path.join(root, '..', 'frontend', 'dist')
 const port = Number(process.env.PORT || 5000)
+
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', process.env.FRONTEND_ORIGIN || '*')
+  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+  if (req.method === 'OPTIONS') return res.sendStatus(204)
+  next()
+})
+
+app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'robot-arm-vision-api' }))
 
 function httpUrl(value) {
   try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) ? url : null } catch { return null }
@@ -68,8 +79,12 @@ app.get('/api/servo', async (req, res) => {
   } catch (error) { res.status(502).json({ ok: false, error: error.message }) }
 })
 
-app.use(express.static(frontendDist))
-app.get(/.*/, (_req, res) => res.sendFile(path.join(frontendDist, 'index.html')))
+if (fs.existsSync(path.join(frontendDist, 'index.html'))) {
+  app.use(express.static(frontendDist))
+  app.get(/.*/, (_req, res) => res.sendFile(path.join(frontendDist, 'index.html')))
+} else {
+  app.get('/', (_req, res) => res.json({ ok: true, service: 'robot-arm-vision-api', health: '/api/health' }))
+}
 const httpServer = app.listen(port, '0.0.0.0', () => {
   console.log(`Backend running: http://localhost:${port}`)
 })

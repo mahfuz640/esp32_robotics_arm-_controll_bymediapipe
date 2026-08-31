@@ -3,6 +3,8 @@ import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision'
 
 const MODEL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'
 const WASM = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm'
+const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '')
+const apiUrl = path => `${API_BASE}${path}`
 const LINKS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]]
 
 function fingerStates(p, hand) {
@@ -41,7 +43,7 @@ export default function App() {
   const send = useCallback(async (pattern, dir) => {
     try {
       const q = new URLSearchParams({controller:controllerUrl,pattern:pattern.join(','),dir})
-      const response = await fetch(`/api/control?${q}`,{signal:AbortSignal.timeout(1800)})
+      const response = await fetch(apiUrl(`/api/control?${q}`),{signal:AbortSignal.timeout(1800)})
       setControllerOnline(response.ok)
     } catch { setControllerOnline(false) }
   },[controllerUrl])
@@ -67,7 +69,7 @@ export default function App() {
       const loop=async()=>{
         if(!active.current)return
         try{
-          const image=new Image();image.src=`/api/mobile-frame?url=${encodeURIComponent(mobileUrl)}&t=${Date.now()}`;await image.decode()
+          const image=new Image();image.crossOrigin='anonymous';image.src=apiUrl(`/api/mobile-frame?url=${encodeURIComponent(mobileUrl)}&t=${Date.now()}`);await image.decode()
           processResult(image,detector.current.detect(image));job.current=setTimeout(loop,80)
         }catch{active.current=false;setRunning(false);setError('Mobile camera পাওয়া যায়নি। IP Webcam app-এর Start server চাপুন এবং URL পরীক্ষা করুন।')}
       };loop()
@@ -90,7 +92,7 @@ export default function App() {
     setManualBusy(true);setManualMessage('Sending...')
     try{
       const q=new URLSearchParams({controller:controllerUrl,...Object.fromEntries(Object.entries(angles).map(([k,v])=>[k,String(v)]))})
-      const response=await fetch(`/api/servo?${q}`,{signal:AbortSignal.timeout(9000)})
+      const response=await fetch(apiUrl(`/api/servo?${q}`),{signal:AbortSignal.timeout(9000)})
       if(!response.ok)throw new Error('Servo command failed')
       setControllerOnline(true);setManualMessage('Movement complete')
     }catch{setControllerOnline(false);setManualMessage('ESP8266 not responding')}
@@ -101,7 +103,7 @@ export default function App() {
     const check=async()=>{
       try{
         const q=new URLSearchParams({controller:controllerUrl})
-        const response=await fetch(`/api/device-status?${q}`,{signal:AbortSignal.timeout(2200),cache:'no-store'})
+        const response=await fetch(apiUrl(`/api/device-status?${q}`),{signal:AbortSignal.timeout(2200),cache:'no-store'})
         const result=await response.json()
         if(!cancelled)setControllerOnline(Boolean(result.online))
       }catch{if(!cancelled)setControllerOnline(false)}

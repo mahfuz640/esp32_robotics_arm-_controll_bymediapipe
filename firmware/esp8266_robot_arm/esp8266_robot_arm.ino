@@ -1,9 +1,7 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266WebServer.h>
 #include <Servo.h>
-
-const char* WIFI_SSID = "ZerOne BD";
-const char* WIFI_PASSWORD = "zeronebd@2026";
+#include "secrets.h"
 
 ESP8266WebServer server(80);
 Servo servoBase, servoShoulder, servoElbow;
