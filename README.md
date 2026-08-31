@@ -1,5 +1,7 @@
 # React Robot Arm Vision Control
 
+সম্পূর্ণ বাংলা setup, architecture, API, deployment ও troubleshooting guide: [PROJECT_DOCUMENTATION_BN.md](PROJECT_DOCUMENTATION_BN.md)
+
 একই dashboard-এ device/mobile camera থেকে MediaPipe finger detection, ESP8266 robot-arm control এবং ESP32-CAM live monitoring দেখা যায়।
 
 ## Project layout
