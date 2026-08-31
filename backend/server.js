@@ -98,8 +98,7 @@ app.get('/api/control', async (req, res) => {
 
 app.get('/api/device-status', async (req, res) => {
   if (mqttClient) {
-    const fresh = Date.now() - deviceStatus.lastSeen < 15000
-    return res.set('Cache-Control', 'no-store').json({ ...deviceStatus, online: mqttOnline && deviceStatus.online && fresh, broker: mqttOnline, transport: 'mqtt' })
+    return res.set('Cache-Control', 'no-store').json({ ...deviceStatus, online: mqttOnline && deviceStatus.online, broker: mqttOnline, transport: 'mqtt' })
   }
   const target = httpUrl(req.query.controller)
   if (!target) return res.status(400).json({ online: false, error: 'Invalid controller URL' })

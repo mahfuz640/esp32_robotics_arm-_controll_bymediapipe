@@ -53,7 +53,7 @@ Dashboard-এর Base, Shoulder ও Elbow slider `0–180°` value নেয়। 
 
 ## MQTT cloud transport
 
-Backend-এ `MQTT_URL` থাকলে HTTP LAN transport-এর বদলে MQTT ব্যবহার হয়। Gesture payload `gesture|0,1,0,0,0|right` এবং manual payload `servo|90|90|90` হিসেবে `robot-arm/<device-id>/command` topic-এ QoS 1-এ publish হয়। ESP8266 `robot-arm/<device-id>/status` topic-এ retained online state ও প্রতি ৫ সেকেন্ডে heartbeat publish করে। Backend ১৫ সেকেন্ড heartbeat না পেলে device offline দেখায়। `MQTT_URL` না থাকলে local HTTP fallback আগের মতো কাজ করে।
+Backend-এ `MQTT_URL` থাকলে HTTP LAN transport-এর বদলে MQTT ব্যবহার হয়। Gesture payload `gesture|0,1,0,0,0|right` এবং manual payload `servo|90|90|90` হিসেবে `robot-arm/<device-id>/command` topic-এ QoS 1-এ publish হয়। ESP8266 `robot-arm/<device-id>/status` topic-এ retained online state ও heartbeat publish করে। Heartbeat দেরি হলে offline হয় না; ESP8266 সত্যিই disconnect হলে broker-এর retained Last Will status offline দেখায়। `MQTT_URL` না থাকলে local HTTP fallback আগের মতো কাজ করে।
 
 ## চালানোর নিয়ম
 
