@@ -1,138 +1,40 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision'
 
-const MODEL = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'
-const WASM = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm'
-const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '')
-const apiUrl = path => `${API_BASE}${path}`
-const CLOUD_MQTT_MODE = Boolean(API_BASE)
-const LINKS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]]
+const MODEL='https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'
+const WASM='https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm'
+const API=(import.meta.env.VITE_API_URL||'').replace(/\/$/,'')
+const url=p=>`${API}${p}`
+const LINKS=[[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]]
 
-function fingerStates(p, hand) {
-  const states = [hand === 'Right' ? Number(p[4].x < p[3].x) : Number(p[4].x > p[3].x)]
-  for (const [tip, pip] of [[8,6],[12,10],[16,14],[20,18]]) states.push(Number(p[tip].y < p[pip].y))
-  return states
-}
+function draw(canvas,video,pts){const w=video.videoWidth,h=video.videoHeight;if(!w||!h)return;canvas.width=w;canvas.height=h;const c=canvas.getContext('2d');c.save();c.translate(w,0);c.scale(-1,1);c.drawImage(video,0,0);if(pts){c.strokeStyle='#9dfb53';c.lineWidth=3;LINKS.forEach(([a,b])=>{c.beginPath();c.moveTo(pts[a].x*w,pts[a].y*h);c.lineTo(pts[b].x*w,pts[b].y*h);c.stroke()});c.fillStyle='#f4ffdf';pts.forEach(p=>{c.beginPath();c.arc(p.x*w,p.y*h,4,0,Math.PI*2);c.fill()})}c.restore()}
+function estimate(p){if(!p)return null;const palm=Math.hypot(p[5].x-p[17].x,p[5].y-p[17].y);return{x:Math.round((.5-p[0].x)*48),y:Math.round((.72-p[0].y)*42),z:Math.round(Math.min(36,Math.max(10,4.6/Math.max(palm,.04))))}}
+const Pill=({active,children})=><span className={`pill ${active?'active':''}`}><i/>{children}</span>
+const Metric=({value,label,unit=''})=><div className="metric"><strong>{value}<small>{unit}</small></strong><span>{label}</span></div>
 
-function paint(canvas, source, points) {
-  const width = source.videoWidth || source.naturalWidth, height = source.videoHeight || source.naturalHeight
-  if (!width || !height) return
-  canvas.width = width; canvas.height = height
-  const ctx = canvas.getContext('2d'); ctx.save(); ctx.translate(width, 0); ctx.scale(-1, 1); ctx.drawImage(source, 0, 0)
-  if (points) {
-    ctx.strokeStyle = '#40e6b1'; ctx.lineWidth = 4
-    for (const [a,b] of LINKS) { ctx.beginPath(); ctx.moveTo(points[a].x*width, points[a].y*height); ctx.lineTo(points[b].x*width, points[b].y*height); ctx.stroke() }
-    ctx.fillStyle = '#ffca5c'
-    for (const p of points) { ctx.beginPath(); ctx.arc(p.x*width,p.y*height,5,0,Math.PI*2); ctx.fill() }
-  }
-  ctx.restore()
-}
-
-const Status = ({online, children}) => <span className={`status ${online?'online':''}`}><i />{children}</span>
-
-export default function App() {
-  const video = useRef(null), canvas = useRef(null), detector = useRef(null), job = useRef(0), active = useRef(false)
-  const lastFinger = useRef(-1), lastSent = useRef(0)
-  const [running,setRunning] = useState(false), [loading,setLoading] = useState(false), [error,setError] = useState('')
-  const [mode,setMode] = useState('local'), [fingers,setFingers] = useState(0), [hasHand,setHasHand] = useState(false)
-  const [controllerOnline,setControllerOnline] = useState(false), [monitorOnline,setMonitorOnline] = useState(false), [monitorTick,setMonitorTick] = useState(0), [monitorFrameError,setMonitorFrameError] = useState(false), [settings,setSettings] = useState(false)
-  const [angles,setAngles] = useState({base:90,shoulder:90,elbow:90}), [manualBusy,setManualBusy] = useState(false), [manualMessage,setManualMessage] = useState('')
-  const [mobileUrl,setMobileUrl] = useState(()=>localStorage.getItem('mobileUrl')||'http://192.168.0.20:8080/video')
-  const [controllerUrl,setControllerUrl] = useState(()=>localStorage.getItem('controllerUrl')||'http://192.168.0.40')
-
-  const send = useCallback(async (pattern, dir) => {
-    try {
-      const q = new URLSearchParams({controller:controllerUrl,pattern:pattern.join(','),dir})
-      const response = await fetch(apiUrl(`/api/control?${q}`),{signal:AbortSignal.timeout(1800)})
-      setControllerOnline(response.ok)
-    } catch { setControllerOnline(false) }
-  },[controllerUrl])
-
-  const processResult = useCallback((source,result) => {
-    const points=result.landmarks?.[0]; paint(canvas.current,source,points); setHasHand(Boolean(points))
-    if (!points) return
-    const pattern=fingerStates(points,result.handednesses?.[0]?.[0]?.categoryName||'Right'); const value=pattern.reduce((a,b)=>a+b,0); setFingers(value)
-    const dir=points[0].x<0.4?'left':points[0].x>0.6?'right':'center'; const gestureKey=`${pattern.join(',')}:${dir}`
-    const now=performance.now()
-    if(gestureKey!==lastFinger.current && now-lastSent.current>180){lastFinger.current=gestureKey;lastSent.current=now;send(pattern,dir)}
-  },[send])
-
-  async function loadDetector(runningMode){
-    const vision=await FilesetResolver.forVisionTasks(WASM); detector.current?.close()
-    detector.current=await HandLandmarker.createFromOptions(vision,{baseOptions:{modelAssetPath:MODEL,delegate:'GPU'},runningMode,numHands:1,minHandDetectionConfidence:.6,minTrackingConfidence:.6})
-  }
-
-  async function startIp(){
-    setLoading(true);setError('')
-    try{
-      await loadDetector('IMAGE');active.current=true;setRunning(true)
-      const loop=async()=>{
-        if(!active.current)return
-        try{
-          const image=new Image();image.crossOrigin='anonymous';image.src=apiUrl(`/api/mobile-frame?url=${encodeURIComponent(mobileUrl)}&t=${Date.now()}`);await image.decode()
-          processResult(image,detector.current.detect(image));job.current=setTimeout(loop,80)
-        }catch{active.current=false;setRunning(false);setError('Mobile camera পাওয়া যায়নি। IP Webcam app-এর Start server চাপুন এবং URL পরীক্ষা করুন।')}
-      };loop()
-    }catch(e){setError(e.message||'MediaPipe load হয়নি');setRunning(false)}finally{setLoading(false)}
-  }
-
-  async function startLocal(){
-    setLoading(true);setError('')
-    try{
-      if(!window.isSecureContext)throw new Error('এই device camera-এর জন্য HTTPS অথবা localhost প্রয়োজন।')
-      await loadDetector('VIDEO');const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'},audio:false})
-      video.current.srcObject=stream;await video.current.play();active.current=true;setRunning(true)
-      const loop=()=>{if(!active.current)return;processResult(video.current,detector.current.detectForVideo(video.current,performance.now()));job.current=requestAnimationFrame(loop)};loop()
-    }catch(e){setError(e.message||'Camera চালু হয়নি');setRunning(false)}finally{setLoading(false)}
-  }
-
-  function stop(){active.current=false;cancelAnimationFrame(job.current);clearTimeout(job.current);video.current?.srcObject?.getTracks().forEach(t=>t.stop());setRunning(false);setHasHand(false)}
-  function save(e){e.preventDefault();localStorage.setItem('mobileUrl',mobileUrl);localStorage.setItem('controllerUrl',controllerUrl);setSettings(false)}
-  async function moveServos(){
-    setManualBusy(true);setManualMessage('Sending...')
-    try{
-      const q=new URLSearchParams({controller:controllerUrl,...Object.fromEntries(Object.entries(angles).map(([k,v])=>[k,String(v)]))})
-      const response=await fetch(apiUrl(`/api/servo?${q}`),{signal:AbortSignal.timeout(9000)})
-      if(!response.ok)throw new Error('Servo command failed')
-      setControllerOnline(true);setManualMessage('Movement complete')
-    }catch{setControllerOnline(false);setManualMessage('ESP8266 not responding')}
-    finally{setManualBusy(false)}
-  }
-  useEffect(()=>{
-    let cancelled=false
-    const check=async()=>{
-      try{
-        const q=new URLSearchParams({controller:controllerUrl})
-        const response=await fetch(apiUrl(`/api/device-status?${q}`),{signal:AbortSignal.timeout(2200),cache:'no-store'})
-        const result=await response.json()
-        if(!cancelled)setControllerOnline(Boolean(result.online))
-      }catch{if(!cancelled)setControllerOnline(false)}
-    }
-    check();const timer=setInterval(check,3000)
-    return()=>{cancelled=true;clearInterval(timer)}
-  },[controllerUrl])
-  useEffect(()=>{
-    let cancelled=false
-    const check=async()=>{
-      try{const response=await fetch(apiUrl('/api/camera-status'),{cache:'no-store'});const result=await response.json();if(!cancelled){setMonitorOnline(Boolean(result.online));if(result.online)setMonitorTick(Date.now())}}
-      catch{if(!cancelled)setMonitorOnline(false)}
-    }
-    check();const timer=setInterval(check,250)
-    return()=>{cancelled=true;clearInterval(timer)}
-  },[])
-  useEffect(()=>()=>{active.current=false;cancelAnimationFrame(job.current);clearTimeout(job.current);video.current?.srcObject?.getTracks().forEach(t=>t.stop());detector.current?.close()},[])
-
-  return <div className="app">
-    <header><div><p className="eyebrow">A PROJECT BY MD. MAHFUZUR RAHMAN</p><h1>IoT-Based Computer Vision Robotic Arm</h1><p className="subtitle">Controlled by Hand Gestures</p><p className="creator-line">AI &amp; Robotics Engineer <i/> ZerOne BD Ltd.</p></div><div className="header-actions"><div className="gesture"><small>DETECTED</small><strong>{hasHand?`${fingers} FINGER${fingers===1?'':'S'}`:'NO HAND'}</strong></div><button className="icon-button" onClick={()=>setSettings(v=>!v)}>⚙ Settings</button></div></header>
-    {settings&&<form className="settings" onSubmit={save}><label>Mobile IP Camera<input value={mobileUrl} onChange={e=>setMobileUrl(e.target.value)} placeholder="http://PHONE_IP:8080/video"/></label>{CLOUD_MQTT_MODE?<label>ESP8266 connection<input value="Automatic · MQTT Cloud" disabled/></label>:<label>ESP8266 URL<input value={controllerUrl} onChange={e=>setControllerUrl(e.target.value)}/></label>}<label>ESP32-CAM connection<input value="Automatic · MQTT Cloud" disabled/></label><button>Save</button></form>}
-    {error&&<div className="alert">{error}</div>}
-    <main>
-      <section className="camera-card"><div className="card-head"><div><span className="number">01</span><h2>Device Camera</h2><p>এই device-এর camera দিয়ে finger detection</p></div><Status online={running}>{running?'LIVE':'OFFLINE'}</Status></div><div className="viewport"><video ref={video} playsInline muted/><canvas ref={canvas}/>{!running&&<div className="empty"><span>✋</span><p>Camera বন্ধ আছে</p></div>}</div><div className="controls source-controls"><select value={mode} disabled={running} onChange={e=>setMode(e.target.value)}><option value="local">This device camera</option><option value="ip">Mobile IP Camera</option></select>{running?<button className="danger" onClick={stop}>Stop camera</button>:<button onClick={mode==='ip'?startIp:startLocal} disabled={loading}>{loading?'MediaPipe loading…':'Start device camera'}</button>}</div></section>
-      <section className="camera-card"><div className="card-head"><div><span className="number">02</span><h2>ESP32-CAM</h2><p>MQTT cloud monitoring</p></div><Status online={monitorOnline&&!monitorFrameError}>{monitorOnline&&!monitorFrameError?'LIVE':monitorOnline?'WAITING':'OFFLINE'}</Status></div><div className="viewport">{monitorOnline?<img className="monitor" src={apiUrl(`/api/camera-frame?t=${monitorTick}`)} alt="ESP32-CAM" onLoad={()=>setMonitorFrameError(false)} onError={()=>setMonitorFrameError(true)}/>:<div className="empty"><span>📷</span><p>ESP32-CAM offline</p></div>}</div><div className="controls meta"><span>ESP8266</span><Status online={controllerOnline}>{controllerOnline?'CONNECTED':'NOT CONNECTED'}</Status></div></section>
-    </main>
-    <section className="manual-panel"><div className="manual-heading"><div><p className="eyebrow">MANUAL MODE</p><h2>Servo position control</h2></div><Status online={controllerOnline}>{controllerOnline?'ESP8266 CONNECTED':'ESP8266 OFFLINE'}</Status></div><div className="sliders">{[['base','Base'],['shoulder','Shoulder'],['elbow','Elbow']].map(([key,label])=><label className="slider" key={key}><span><b>{label}</b><output>{angles[key]}°</output></span><input type="range" min="0" max="180" value={angles[key]} onChange={e=>setAngles(current=>({...current,[key]:Number(e.target.value)}))}/><small>0° <i/> 90° <i/> 180°</small></label>)}</div><div className="manual-actions"><span className={manualMessage.includes('complete')?'success':''}>{manualMessage}</span><button onClick={moveServos} disabled={manualBusy||!controllerOnline}>{manualBusy?'Moving…':'Move servos'}</button></div></section>
-    <section className="how-to"><div className="section-heading"><p className="eyebrow">ব্যবহারের নির্দেশনা</p><h2>MediaPipe দিয়ে রোবটিক আর্ম যেভাবে চালাবেন</h2><p>ক্যামেরার সামনে একটি হাত পরিষ্কারভাবে দেখান। MediaPipe আঙুলের অবস্থা ও হাতের অবস্থান শনাক্ত করে MQTT-এর মাধ্যমে ESP8266-এ command পাঠাবে।</p></div><ol className="steps"><li><b>Device Camera</b><span>`Start device camera` চাপুন এবং browser-এর camera permission Allow করুন।</span></li><li><b>হাত দেখান</b><span>আলোযুক্ত জায়গায় হাতটি camera থেকে প্রায় ৩০–৭০ সেমি দূরে রাখুন।</span></li><li><b>Gesture দিন</b><span>নিচের gesture স্থিরভাবে ১–২ সেকেন্ড দেখান। একবারে একটি হাত ব্যবহার করুন।</span></li><li><b>Status দেখুন</b><span>`ESP8266 CONNECTED` এবং gesture box-এ detected finger count নিশ্চিত করুন।</span></li></ol><div className="gesture-guide"><article><strong>✊</strong><b>মুষ্টি + হাত বামে</b><span>Base servo 0°</span></article><article><strong>✊</strong><b>মুষ্টি + হাত ডানে</b><span>Base servo 180°</span></article><article><strong>☝️</strong><b>শুধু Index finger</b><span>Shoulder servo 90°</span></article><article><strong>✌️</strong><b>Index + Middle</b><span>Shoulder servo 40°</span></article><article><strong>💍</strong><b>শুধু Ring finger</b><span>Elbow servo 0°</span></article><article><strong>🤙</strong><b>শুধু Pinky finger</b><span>Elbow servo 140°</span></article><article><strong>🖐️</strong><b>সব আঙুল খোলা</b><span>সব servo 90° Home</span></article></div><div className="instruction-note"><b>Manual control:</b><span>নির্দিষ্ট angle দরকার হলে নিচের Base, Shoulder ও Elbow slider সেট করে `Move servos` চাপুন। Servo চলার সময় আর্ম থেকে হাত ও বাধা দূরে রাখুন।</span></div></section>
-    <section className="about-project"><div className="about-copy"><p className="eyebrow">ABOUT THE PROJECT</p><h2>Control the future with the movement of your hand.</h2><p>This IoT-based robotic arm uses computer vision and MediaPipe to understand hand and finger gestures. Commands travel securely through a React dashboard, Render backend and HiveMQ Cloud to an ESP8266, which controls the arm’s base, shoulder and elbow. An ESP32-CAM provides remote visual monitoring.</p><div className="tech-list"><span>React.js</span><span>MediaPipe</span><span>Node.js</span><span>MQTT</span><span>HiveMQ Cloud</span><span>ESP8266</span><span>ESP32-CAM</span></div></div><aside><small>DESIGNED &amp; DEVELOPED BY</small><strong>MD. MAHFUZUR RAHMAN</strong><p>AI &amp; Robotics Engineer</p><p className="company">ZerOne BD Ltd.</p></aside></section>
-    <footer><span>0: close</span><span>1: left</span><span>2: center</span><span>3: right</span><span>4: down</span><span>5: open/up</span></footer>
-  </div>
+export default function App(){
+ const video=useRef(null),canvas=useRef(null),detector=useRef(null),raf=useRef(0),live=useRef(false),frames=useRef({n:0,t:0})
+ const [running,setRunning]=useState(false),[loading,setLoading]=useState(false),[error,setError]=useState(''),[hand,setHand]=useState(false)
+ const [target,setTarget]=useState({x:0,y:0,z:0}),[fps,setFps]=useState(0),[confidence,setConfidence]=useState(0)
+ const [controller,setController]=useState(false),[camera,setCamera]=useState(false),[camTick,setCamTick]=useState(0)
+ const [angles,setAngles]=useState({base:90,shoulder:90,elbow:90}),[busy,setBusy]=useState(false),[message,setMessage]=useState('')
+ const controllerUrl=useRef(localStorage.getItem('controllerUrl')||'http://192.168.0.40')
+ const process=useCallback((result,now)=>{const p=result.landmarks?.[0];draw(canvas.current,video.current,p);setHand(Boolean(p));if(p){setTarget(estimate(p));setConfidence(Math.round((result.handednesses?.[0]?.[0]?.score||0)*100))}frames.current.n++;if(now-frames.current.t>600){setFps(Math.round(frames.current.n*1000/(now-frames.current.t||1000)));frames.current={n:0,t:now}}},[])
+ async function start(){setLoading(true);setError('');try{if(!window.isSecureContext)throw new Error('ক্যামেরার জন্য HTTPS অথবা localhost ব্যবহার করুন।');const vision=await FilesetResolver.forVisionTasks(WASM);detector.current?.close();detector.current=await HandLandmarker.createFromOptions(vision,{baseOptions:{modelAssetPath:MODEL,delegate:'GPU'},runningMode:'VIDEO',numHands:1,minHandDetectionConfidence:.6,minTrackingConfidence:.6});const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false});video.current.srcObject=stream;await video.current.play();live.current=true;setRunning(true);frames.current={n:0,t:performance.now()};const loop=now=>{if(!live.current)return;process(detector.current.detectForVideo(video.current,now),now);raf.current=requestAnimationFrame(loop)};raf.current=requestAnimationFrame(loop)}catch(e){setError(e.message||'ক্যামেরা চালু করা যায়নি।')}finally{setLoading(false)}}
+ function stop(){live.current=false;cancelAnimationFrame(raf.current);video.current?.srcObject?.getTracks().forEach(t=>t.stop());setRunning(false);setHand(false);setFps(0)}
+ async function move(){setBusy(true);setMessage('Command পাঠানো হচ্ছে…');try{const q=new URLSearchParams({controller:controllerUrl.current,...Object.fromEntries(Object.entries(angles).map(([k,v])=>[k,String(v)]))});const r=await fetch(url(`/api/servo?${q}`),{signal:AbortSignal.timeout(9000)});if(!r.ok)throw new Error();setController(true);setMessage('Position command সম্পন্ন হয়েছে')}catch{setController(false);setMessage('Controller সাড়া দিচ্ছে না')}finally{setBusy(false)}}
+ useEffect(()=>{const check=async()=>{try{const q=new URLSearchParams({controller:controllerUrl.current});const r=await fetch(url(`/api/device-status?${q}`),{signal:AbortSignal.timeout(2200),cache:'no-store'});setController(Boolean((await r.json()).online))}catch{setController(false)}};check();const id=setInterval(check,3500);return()=>clearInterval(id)},[])
+ useEffect(()=>{const check=async()=>{try{const r=await fetch(url('/api/camera-status'),{cache:'no-store'});const d=await r.json();setCamera(Boolean(d.online));if(d.online)setCamTick(Date.now())}catch{setCamera(false)}};check();const id=setInterval(check,700);return()=>clearInterval(id)},[])
+ useEffect(()=>()=>{live.current=false;cancelAnimationFrame(raf.current);video.current?.srcObject?.getTracks().forEach(t=>t.stop());detector.current?.close()},[])
+ return <div className="site">
+  <nav><a className="brand" href="#top"><span>R³</span><b>HAND//ARM LAB</b></a><div className="navlinks"><a href="#method">Method</a><a href="#experiment">Experiment</a><a href="#prototype">Prototype</a></div><Pill active={controller}>{controller?'SYSTEM ONLINE':'LAB MODE'}</Pill></nav>
+  <header id="top" className="hero"><div className="hero-copy"><p className="kicker">RESEARCH PROTOTYPE · 3-DOF TELEOPERATION</p><h1>হাতের ইশারায়<br/><em>নিরাপদ রোবটিক নিয়ন্ত্রণ।</em></h1><p className="lead">Mobile Web MediaPipe, monocular 3D position estimation এবং latency-aware adaptive scaling ব্যবহার করে কম খরচের 3-DOF robotic arm teleoperation framework.</p><div className="hero-actions"><a className="button" href="#prototype">Live prototype</a><a className="text-link" href="#experiment">Research design <span>↗</span></a></div></div><div className="hero-visual"><div className="grid-orbit"/><div className="arm base"/><div className="arm upper"/><div className="joint j1">01</div><div className="joint j2">02</div><div className="arm fore"/><div className="joint j3">03</div><div className="grip">⌁</div><span className="axis ax">X</span><span className="axis ay">Y</span><span className="axis az">Z</span><div className="visual-tag"><i/> TARGET POSITION<br/><b>X 18 · Y 24 · Z 31 cm</b></div></div></header>
+  <section className="summary-strip"><div><small>RESEARCH QUESTION</small><p>Adaptive scaling ও latency compensation কি fixed mapping-এর তুলনায় accuracy এবং safety উন্নত করে?</p></div><Metric value="03" label="ARM DOF"/><Metric value="21" label="HAND LANDMARKS"/><Metric value="04" label="TEST CONDITIONS"/></section>
+  <section id="method" className="section method"><div className="section-intro"><p className="kicker">01 · PROPOSED METHOD</p><h2>একটি হাত থেকে<br/>একটি নিরাপদ trajectory.</h2><p>প্রতিটি frame-কে calibrated Cartesian target-এ রূপান্তর করা হয়। IK solver joint limit মেনে servo angle তৈরি করে; safety layer tracking হারালে motion বন্ধ করে।</p></div><div className="pipeline">{[['01','PERCEPTION','MediaPipe-এর 21 landmark থেকে wrist, palm width ও pinch state.'],['02','3D ESTIMATION','Calibrated palm scale দিয়ে camera-relative X, Y, Z.'],['03','ADAPTIVE CONTROL','Distance, velocity, confidence ও latency থেকে dynamic gain.'],['04','SAFE IK','Workspace clamp, joint limit ও 3-DOF inverse kinematics.'],['05','EXECUTION','ESP controller-এ timestamped command; ESP32-CAM feedback.']].map(([n,t,d])=><article key={n}><span>{n}</span><div><h3>{t}</h3><p>{d}</p></div></article>)}</div></section>
+  <section className="equation-panel"><div><p className="kicker">CONTROL LAW</p><h2>Target-এর কাছে ধীর,<br/>খোলা পথে দ্রুত।</h2></div><div className="formula"><span>s(t) = s<sub>min</sub> + (s<sub>max</sub> − s<sub>min</sub>)</span><b>g(d) · g(v) · g(L) · g(c)</b></div><div className="legend"><span><i style={{'--c':'#9dfb53'}}/>d · target distance</span><span><i style={{'--c':'#7dd3fc'}}/>v · hand velocity</span><span><i style={{'--c':'#f9a8d4'}}/>L · network latency</span><span><i style={{'--c':'#fde68a'}}/>c · tracking confidence</span></div></section>
+  <section id="experiment" className="section experiment"><div className="section-title"><p className="kicker">02 · EXPERIMENTAL DESIGN</p><h2>Baseline বনাম proposed method.</h2><p>একই participant প্রতিটি condition-এ reaching ও pick-and-place task সম্পন্ন করবে।</p></div><div className="conditions"><div className="table-head"><span>CONDITION</span><span>SCALING</span><span>COMPENSATION</span><span>SAFETY</span></div>{[['C1 · Baseline','Fixed','—','Hard limit'],['C2','Adaptive','—','Hard limit'],['C3','Fixed','Latency-aware','Hard limit'],['C4 · Proposed','Adaptive','Latency-aware','Soft workspace']].map((r,i)=><div className={i===3?'featured':''} key={r[0]}>{r.map((x,j)=><span key={x}>{j===0&&i===3?<b>★</b>:null}{x}</span>)}</div>)}</div><div className="metrics-row">{[['cm','Endpoint error'],['sec','Completion time'],['%','Success rate'],['ms','End-to-end latency'],['#','Safety violations']].map(([u,l])=><div key={l}><strong>{u}</strong><span>{l}</span></div>)}</div></section>
+  <section id="prototype" className="prototype"><div className="prototype-head"><div><p className="kicker">03 · LIVE PROTOTYPE</p><h2>Tracking &amp; control console</h2></div><div className="status-row"><Pill active={running}>{running?'MEDIAPIPE LIVE':'CAMERA OFF'}</Pill><Pill active={controller}>ESP CONTROLLER</Pill><Pill active={camera}>ESP32-CAM</Pill></div></div>{error&&<div className="alert">{error}</div>}<div className="console-grid"><div className="feed-card"><div className="feed-title"><span>OPERATOR CAMERA</span><span>{fps||'--'} FPS</span></div><div className="viewport"><video ref={video} muted playsInline/><canvas ref={canvas}/>{!running&&<div className="feed-empty"><div>+</div><p>Camera stream অপেক্ষমাণ</p></div>}<div className="reticle"/></div><div className="feed-controls">{running?<button className="button stop" onClick={stop}>Stop tracking</button>:<button className="button" onClick={start} disabled={loading}>{loading?'Model loading…':'Start hand tracking'}</button>}<span>HTTPS permission প্রয়োজন</span></div></div><div className="telemetry"><p className="kicker">LIVE TELEMETRY</p><Metric value={hand?'TRACKED':'—'} label="HAND STATE"/><div className="xyz"><div><span>X</span><b>{target.x}</b><small>cm</small></div><div><span>Y</span><b>{target.y}</b><small>cm</small></div><div><span>Z</span><b>{target.z}</b><small>cm</small></div></div><div className="confidence"><span>TRACKING CONFIDENCE <b>{confidence}%</b></span><i><u style={{width:`${confidence}%`}}/></i></div><p className="note">এটি monocular calibrated estimate; experiment-এর আগে ground-truth distance দিয়ে calibration করতে হবে।</p></div><div className="feed-card remote"><div className="feed-title"><span>REMOTE FEEDBACK</span><span>{camera?'LIVE':'OFFLINE'}</span></div><div className="viewport">{camera?<img src={url(`/api/camera-frame?t=${camTick}`)} alt="ESP32-CAM feedback"/>:<div className="feed-empty"><div>⌾</div><p>ESP32-CAM সংযোগ নেই</p></div>}</div><div className="feed-controls"><Pill active={camera}>{camera?'VISUAL LINK':'WAITING'}</Pill><span>Timestamped remote view</span></div></div></div><div className="manual"><div><p className="kicker">MANUAL VALIDATION</p><h3>Joint position test</h3></div><div className="sliders">{[['base','Base · q₁'],['shoulder','Shoulder · q₂'],['elbow','Elbow · q₃']].map(([key,label])=><label key={key}><span>{label}<b>{angles[key]}°</b></span><input type="range" min="0" max="180" value={angles[key]} onChange={e=>setAngles(a=>({...a,[key]:Number(e.target.value)}))}/></label>)}</div><div className="manual-action"><small>{message||'Joint limits: 0°—180°'}</small><button className="button" onClick={move} disabled={busy}>{busy?'Sending…':'Send joint command'}</button></div></div></section>
+  <section className="paper"><div><p className="kicker">PAPER BLUEPRINT</p><h2>Engineering project থেকে<br/><em>publishable evidence.</em></h2></div><ol>{[['01','Hypothesis','Adaptive + compensated control endpoint error ও overshoot কমাবে।'],['02','Protocol','Reaching, pick-and-place ও workspace-boundary task; controlled latency levels.'],['03','Evidence','Trajectory, error, time, success, jitter এবং safety event automatic logging.'],['04','Analysis','Repeated-measures statistical comparison এবং effect-size reporting.']].map(([n,t,d])=><li key={n}><span>{n}</span><p><b>{t}</b>{d}</p></li>)}</ol></section>
+  <footer><div className="brand"><span>R³</span><b>HAND//ARM LAB</b></div><p>Mobile vision research prototype · 3-DOF + gripper</p><p>MD. MAHFUZUR RAHMAN · 2026</p></footer>
+ </div>
 }
