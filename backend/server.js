@@ -11,9 +11,13 @@ const port = Number(process.env.PORT || 5000)
 const mqttDeviceId = process.env.MQTT_DEVICE_ID || 'robot-arm-01'
 const commandTopic = `robot-arm/${mqttDeviceId}/command`
 const statusTopic = `robot-arm/${mqttDeviceId}/status`
+const cameraFrameTopic = `robot-arm/${mqttDeviceId}/camera/frame`
+const cameraStatusTopic = `robot-arm/${mqttDeviceId}/camera/status`
 let mqttClient = null
 let mqttOnline = false
 let deviceStatus = { online: false, lastSeen: 0 }
+let cameraStatus = { online: false, lastSeen: 0 }
+let latestCameraFrame = null
 
 if (process.env.MQTT_URL) {
   mqttClient = mqtt.connect(process.env.MQTT_URL, {
@@ -25,13 +29,24 @@ if (process.env.MQTT_URL) {
   })
   mqttClient.on('connect', () => {
     mqttOnline = true
-    mqttClient.subscribe(statusTopic, { qos: 1 })
-    console.log(`[MQTT] Connected; subscribed to ${statusTopic}`)
+    mqttClient.subscribe([statusTopic, cameraFrameTopic, cameraStatusTopic], { qos: 1 })
+    console.log('[MQTT] Connected; robot and ESP32-CAM topics subscribed')
   })
   mqttClient.on('reconnect', () => { mqttOnline = false })
   mqttClient.on('close', () => { mqttOnline = false })
   mqttClient.on('error', error => console.error('[MQTT]', error.message))
   mqttClient.on('message', (topic, payload) => {
+    if (topic === cameraFrameTopic) {
+      if (payload.length >= 4 && payload.length <= 250000 && payload[0] === 0xff && payload[1] === 0xd8) {
+        latestCameraFrame = Buffer.from(payload)
+        cameraStatus = { online: true, lastSeen: Date.now() }
+      }
+      return
+    }
+    if (topic === cameraStatusTopic) {
+      cameraStatus = { online: payload.toString() === 'online', lastSeen: Date.now() }
+      return
+    }
     if (topic !== statusTopic) return
     try {
       const status = JSON.parse(payload.toString())
@@ -56,6 +71,18 @@ app.use((req, res, next) => {
 })
 
 app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'robot-arm-vision-api' }))
+
+app.get('/api/camera-status', (_req, res) => {
+  const fresh = Date.now() - cameraStatus.lastSeen < 10000
+  res.set('Cache-Control', 'no-store').json({ online: mqttOnline && cameraStatus.online && fresh, lastSeen: cameraStatus.lastSeen })
+})
+
+app.get('/api/camera-frame', (_req, res) => {
+  const fresh = Date.now() - cameraStatus.lastSeen < 10000
+  if (!latestCameraFrame || !fresh) return res.status(503).json({ error: 'ESP32-CAM is offline' })
+  res.set({ 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-store, no-cache, must-revalidate' })
+  res.send(latestCameraFrame)
+})
 
 function httpUrl(value) {
   try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) ? url : null } catch { return null }

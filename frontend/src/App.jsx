@@ -35,11 +35,10 @@ export default function App() {
   const lastFinger = useRef(-1), lastSent = useRef(0)
   const [running,setRunning] = useState(false), [loading,setLoading] = useState(false), [error,setError] = useState('')
   const [mode,setMode] = useState('local'), [fingers,setFingers] = useState(0), [hasHand,setHasHand] = useState(false)
-  const [controllerOnline,setControllerOnline] = useState(false), [monitorOnline,setMonitorOnline] = useState(false), [settings,setSettings] = useState(false)
+  const [controllerOnline,setControllerOnline] = useState(false), [monitorOnline,setMonitorOnline] = useState(false), [monitorTick,setMonitorTick] = useState(0), [settings,setSettings] = useState(false)
   const [angles,setAngles] = useState({base:90,shoulder:90,elbow:90}), [manualBusy,setManualBusy] = useState(false), [manualMessage,setManualMessage] = useState('')
   const [mobileUrl,setMobileUrl] = useState(()=>localStorage.getItem('mobileUrl')||'http://192.168.0.20:8080/video')
   const [controllerUrl,setControllerUrl] = useState(()=>localStorage.getItem('controllerUrl')||'http://192.168.0.40')
-  const [monitorUrl,setMonitorUrl] = useState(()=>localStorage.getItem('monitorUrl')||'http://192.168.0.30:81/stream')
 
   const send = useCallback(async (pattern, dir) => {
     try {
@@ -88,7 +87,7 @@ export default function App() {
   }
 
   function stop(){active.current=false;cancelAnimationFrame(job.current);clearTimeout(job.current);video.current?.srcObject?.getTracks().forEach(t=>t.stop());setRunning(false);setHasHand(false)}
-  function save(e){e.preventDefault();localStorage.setItem('mobileUrl',mobileUrl);localStorage.setItem('controllerUrl',controllerUrl);localStorage.setItem('monitorUrl',monitorUrl);setSettings(false)}
+  function save(e){e.preventDefault();localStorage.setItem('mobileUrl',mobileUrl);localStorage.setItem('controllerUrl',controllerUrl);setSettings(false)}
   async function moveServos(){
     setManualBusy(true);setManualMessage('Sending...')
     try{
@@ -112,15 +111,24 @@ export default function App() {
     check();const timer=setInterval(check,3000)
     return()=>{cancelled=true;clearInterval(timer)}
   },[controllerUrl])
+  useEffect(()=>{
+    let cancelled=false
+    const check=async()=>{
+      try{const response=await fetch(apiUrl('/api/camera-status'),{cache:'no-store'});const result=await response.json();if(!cancelled){setMonitorOnline(Boolean(result.online));if(result.online)setMonitorTick(Date.now())}}
+      catch{if(!cancelled)setMonitorOnline(false)}
+    }
+    check();const timer=setInterval(check,1000)
+    return()=>{cancelled=true;clearInterval(timer)}
+  },[])
   useEffect(()=>()=>{active.current=false;cancelAnimationFrame(job.current);clearTimeout(job.current);video.current?.srcObject?.getTracks().forEach(t=>t.stop());detector.current?.close()},[])
 
   return <div className="app">
     <header><div><p className="eyebrow">ESP ROBOTICS LAB</p><h1>Vision Control Center</h1><p className="subtitle">Mobile IP camera, MediaPipe এবং ESP32 monitoring</p></div><div className="header-actions"><div className="gesture"><small>DETECTED</small><strong>{hasHand?`${fingers} FINGER${fingers===1?'':'S'}`:'NO HAND'}</strong></div><button className="icon-button" onClick={()=>setSettings(v=>!v)}>⚙ Settings</button></div></header>
-    {settings&&<form className="settings" onSubmit={save}><label>Mobile IP Camera<input value={mobileUrl} onChange={e=>setMobileUrl(e.target.value)} placeholder="http://PHONE_IP:8080/video"/></label>{CLOUD_MQTT_MODE?<label>ESP8266 connection<input value="Automatic · MQTT Cloud" disabled/></label>:<label>ESP8266 URL<input value={controllerUrl} onChange={e=>setControllerUrl(e.target.value)}/></label>}<label>ESP32-CAM stream<input value={monitorUrl} onChange={e=>setMonitorUrl(e.target.value)}/></label><button>Save</button></form>}
+    {settings&&<form className="settings" onSubmit={save}><label>Mobile IP Camera<input value={mobileUrl} onChange={e=>setMobileUrl(e.target.value)} placeholder="http://PHONE_IP:8080/video"/></label>{CLOUD_MQTT_MODE?<label>ESP8266 connection<input value="Automatic · MQTT Cloud" disabled/></label>:<label>ESP8266 URL<input value={controllerUrl} onChange={e=>setControllerUrl(e.target.value)}/></label>}<label>ESP32-CAM connection<input value="Automatic · MQTT Cloud" disabled/></label><button>Save</button></form>}
     {error&&<div className="alert">{error}</div>}
     <main>
       <section className="camera-card"><div className="card-head"><div><span className="number">01</span><h2>Device Camera</h2><p>এই device-এর camera দিয়ে finger detection</p></div><Status online={running}>{running?'LIVE':'OFFLINE'}</Status></div><div className="viewport"><video ref={video} playsInline muted/><canvas ref={canvas}/>{!running&&<div className="empty"><span>✋</span><p>Camera বন্ধ আছে</p></div>}</div><div className="controls source-controls"><select value={mode} disabled={running} onChange={e=>setMode(e.target.value)}><option value="local">This device camera</option><option value="ip">Mobile IP Camera</option></select>{running?<button className="danger" onClick={stop}>Stop camera</button>:<button onClick={mode==='ip'?startIp:startLocal} disabled={loading}>{loading?'MediaPipe loading…':'Start device camera'}</button>}</div></section>
-      <section className="camera-card"><div className="card-head"><div><span className="number">02</span><h2>ESP32-CAM</h2><p>Robot arm monitoring stream</p></div><Status online={monitorOnline}>{monitorOnline?'LIVE':'CONNECTING'}</Status></div><div className="viewport"><img className="monitor" src={monitorUrl} alt="ESP32-CAM" onLoad={()=>setMonitorOnline(true)} onError={()=>setMonitorOnline(false)}/></div><div className="controls meta"><span>ESP8266</span><Status online={controllerOnline}>{controllerOnline?'CONNECTED':'NOT CONNECTED'}</Status></div></section>
+      <section className="camera-card"><div className="card-head"><div><span className="number">02</span><h2>ESP32-CAM</h2><p>MQTT cloud monitoring</p></div><Status online={monitorOnline}>{monitorOnline?'LIVE':'OFFLINE'}</Status></div><div className="viewport">{monitorOnline?<img className="monitor" src={apiUrl(`/api/camera-frame?t=${monitorTick}`)} alt="ESP32-CAM" onError={()=>setMonitorOnline(false)}/>:<div className="empty"><span>📷</span><p>ESP32-CAM offline</p></div>}</div><div className="controls meta"><span>ESP8266</span><Status online={controllerOnline}>{controllerOnline?'CONNECTED':'NOT CONNECTED'}</Status></div></section>
     </main>
     <section className="manual-panel"><div className="manual-heading"><div><p className="eyebrow">MANUAL MODE</p><h2>Servo position control</h2></div><Status online={controllerOnline}>{controllerOnline?'ESP8266 CONNECTED':'ESP8266 OFFLINE'}</Status></div><div className="sliders">{[['base','Base'],['shoulder','Shoulder'],['elbow','Elbow']].map(([key,label])=><label className="slider" key={key}><span><b>{label}</b><output>{angles[key]}°</output></span><input type="range" min="0" max="180" value={angles[key]} onChange={e=>setAngles(current=>({...current,[key]:Number(e.target.value)}))}/><small>0° <i/> 90° <i/> 180°</small></label>)}</div><div className="manual-actions"><span className={manualMessage.includes('complete')?'success':''}>{manualMessage}</span><button onClick={moveServos} disabled={manualBusy||!controllerOnline}>{manualBusy?'Moving…':'Move servos'}</button></div></section>
     <footer><span>0: close</span><span>1: left</span><span>2: center</span><span>3: right</span><span>4: down</span><span>5: open/up</span></footer>

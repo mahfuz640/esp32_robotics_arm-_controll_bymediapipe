@@ -32,15 +32,16 @@ Development-এর জন্য দুই terminal-এ `npm run dev:backend` এ
 
 - Mobile IP Webcam: `http://PHONE_IP:8080/video`
 - ESP8266: `http://ESP8266_IP`
-- ESP32-CAM: `http://ESP32_IP:81/stream`
+- ESP32-CAM: automatic MQTT cloud connection (no IP/stream URL required)
 
 ## ESP32-CAM online/Wi-Fi firmware
 
 `firmware/esp32_cam_online/secrets.example.h` copy করে একই folder-এ `secrets.h` বানিয়ে
-2.4 GHz Wi-Fi name/password দিন। Arduino IDE-তে **AI Thinker ESP32-CAM**, Partition Scheme
+2.4 GHz Wi-Fi এবং একই MQTT broker credentials দিন। Arduino Library Manager থেকে
+`PubSubClient` install করুন। Arduino IDE-তে **AI Thinker ESP32-CAM**, Partition Scheme
 **Huge APP**, এবং upload speed **115200** নির্বাচন করে `esp32_cam_online.ino` upload করুন।
 Upload-এর সময় GPIO0-কে GND-তে দিন; upload শেষে GPIO0 খুলে reset চাপুন। Serial Monitor-এ
-দেখানো `http://ESP32_IP:81/stream` dashboard-এর ESP32-CAM URL field-এ দিন।
+camera নিজে MQTT-তে JPEG frame পাঠাবে; dashboard-এ কোনো ESP32-CAM IP দিতে হবে না।
 
 ## Render deployment
 
@@ -51,7 +52,7 @@ Root-এর `render.yaml` Blueprint দুইটি service বানায়:
 
 Render Dashboard-এ **New → Blueprint** থেকে GitHub repository connect করুন।
 
-Render cloud local `192.168.x.x` mobile camera, ESP8266 বা ESP32-CAM address access করতে পারে না। Hosted physical control-এর জন্য public HTTPS tunnel, MQTT cloud, অথবা local bridge প্রয়োজন। Local hardware control-এর জন্য computer-এ backend চালানো বর্তমান কার্যকর mode।
+Render cloud local `192.168.x.x` mobile camera address access করতে পারে না। ESP8266 control এবং ESP32-CAM monitoring এখন MQTT cloud দিয়ে চলে, তাই এ দুটির জন্য public IP বা tunnel প্রয়োজন নেই।
 
 ## Hosted control with MQTT
 
