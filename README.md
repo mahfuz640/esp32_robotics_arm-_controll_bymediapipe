@@ -34,6 +34,14 @@ Development-এর জন্য দুই terminal-এ `npm run dev:backend` এ
 - ESP8266: `http://ESP8266_IP`
 - ESP32-CAM: `http://ESP32_IP:81/stream`
 
+## ESP32-CAM online/Wi-Fi firmware
+
+`firmware/esp32_cam_online/secrets.example.h` copy করে একই folder-এ `secrets.h` বানিয়ে
+2.4 GHz Wi-Fi name/password দিন। Arduino IDE-তে **AI Thinker ESP32-CAM**, Partition Scheme
+**Huge APP**, এবং upload speed **115200** নির্বাচন করে `esp32_cam_online.ino` upload করুন।
+Upload-এর সময় GPIO0-কে GND-তে দিন; upload শেষে GPIO0 খুলে reset চাপুন। Serial Monitor-এ
+দেখানো `http://ESP32_IP:81/stream` dashboard-এর ESP32-CAM URL field-এ দিন।
+
 ## Render deployment
 
 Root-এর `render.yaml` Blueprint দুইটি service বানায়:
