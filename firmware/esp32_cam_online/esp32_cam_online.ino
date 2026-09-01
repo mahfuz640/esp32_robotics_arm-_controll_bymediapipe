@@ -77,9 +77,12 @@ void setup() {
   config.pin_sccb_sda = SIOD_GPIO_NUM; config.pin_sccb_scl = SIOC_GPIO_NUM;
   config.pin_pwdn = PWDN_GPIO_NUM; config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000; config.pixel_format = PIXFORMAT_JPEG;
-  config.grab_mode = CAMERA_GRAB_LATEST; config.fb_location = CAMERA_FB_IN_PSRAM;
-  config.frame_size = psramFound() ? FRAMESIZE_QVGA : FRAMESIZE_QQVGA;
-  config.jpeg_quality = psramFound() ? 12 : 16; config.fb_count = psramFound() ? 2 : 1;
+  config.grab_mode = CAMERA_GRAB_LATEST; config.fb_location = psramFound() ? CAMERA_FB_IN_PSRAM : CAMERA_FB_IN_DRAM;
+  // MQTT/TLS-এ বড় QVGA packet ESP32-CAM connection অস্থিতিশীল করে।
+  // QQVGA (160x120) cloud preview-এর জন্য ছোট ও নির্ভরযোগ্য frame দেয়।
+  config.frame_size = FRAMESIZE_QQVGA;
+  config.jpeg_quality = 18;
+  config.fb_count = psramFound() ? 2 : 1;
   if (esp_camera_init(&config) != ESP_OK) { Serial.println("[CAMERA] Init failed"); return; }
 
   frameTopic = String("robot-arm/") + MQTT_DEVICE_ID + "/camera/frame";

@@ -8,4 +8,4 @@ const uint16_t MQTT_PORT = 8883;
 const char* MQTT_USERNAME = "YOUR_MQTT_USERNAME";
 const char* MQTT_PASSWORD = "YOUR_MQTT_PASSWORD";
 const char* MQTT_DEVICE_ID = "robot-arm-01";
-const unsigned long FRAME_INTERVAL_MS = 1000;
+const unsigned long FRAME_INTERVAL_MS = 1500;

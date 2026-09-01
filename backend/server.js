@@ -74,12 +74,12 @@ app.use((req, res, next) => {
 app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'robot-arm-vision-api' }))
 
 app.get('/api/camera-status', (_req, res) => {
-  const fresh = Date.now() - cameraStatus.lastSeen < 10000
+  const fresh = Date.now() - cameraStatus.lastSeen < 30000
   res.set('Cache-Control', 'no-store').json({ online: mqttOnline && cameraStatus.online && fresh, lastSeen: cameraStatus.lastSeen })
 })
 
 app.get('/api/camera-frame', (_req, res) => {
-  const fresh = Date.now() - cameraStatus.lastSeen < 10000
+  const fresh = Date.now() - cameraStatus.lastSeen < 30000
   if (!latestCameraFrame || !fresh) return res.status(503).json({ error: 'ESP32-CAM is offline' })
   res.set({ 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-store, no-cache, must-revalidate' })
   res.send(latestCameraFrame)

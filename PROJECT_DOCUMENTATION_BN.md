@@ -220,6 +220,8 @@ Base=100°, Shoulder=90°, Elbow=40°
 
 ESP8266 retained online status ও heartbeat publish করে। ESP8266 broker থেকে সত্যিই disconnect হলে MQTT Last Will retained `offline` status publish করে। Heartbeat সাময়িক দেরি হলে website offline হয় না।
 
+ESP32-CAM MQTT cloud preview bandwidth কম রাখতে QQVGA `160×120` JPEG এবং default `1500 ms` frame interval ব্যবহার করে। Camera frame ৩০ সেকেন্ড না এলে monitoring panel offline দেখায়। MQTT video পূর্ণ frame-rate stream নয়; এটি low-frame-rate monitoring preview।
+
 ## ১০. Backend API
 
 Production backend:
