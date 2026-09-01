@@ -117,7 +117,7 @@ export default function App() {
       try{const response=await fetch(apiUrl('/api/camera-status'),{cache:'no-store'});const result=await response.json();if(!cancelled){setMonitorOnline(Boolean(result.online));if(result.online)setMonitorTick(Date.now())}}
       catch{if(!cancelled)setMonitorOnline(false)}
     }
-    check();const timer=setInterval(check,1000)
+    check();const timer=setInterval(check,250)
     return()=>{cancelled=true;clearInterval(timer)}
   },[])
   useEffect(()=>()=>{active.current=false;cancelAnimationFrame(job.current);clearTimeout(job.current);video.current?.srcObject?.getTracks().forEach(t=>t.stop());detector.current?.close()},[])
