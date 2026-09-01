@@ -37,7 +37,8 @@ if (process.env.MQTT_URL) {
   mqttClient.on('error', error => console.error('[MQTT]', error.message))
   mqttClient.on('message', (topic, payload) => {
     if (topic === cameraFrameTopic) {
-      if (payload.length >= 4 && payload.length <= 250000 && payload[0] === 0xff && payload[1] === 0xd8) {
+      const end = payload.length - 2
+      if (payload.length >= 4 && payload.length <= 250000 && payload[0] === 0xff && payload[1] === 0xd8 && payload[end] === 0xff && payload[end + 1] === 0xd9) {
         latestCameraFrame = Buffer.from(payload)
         cameraStatus = { online: true, lastSeen: Date.now() }
       }

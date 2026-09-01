@@ -50,15 +50,18 @@ void publishFrame() {
   if (!frame) { Serial.println("[CAMERA] Capture failed"); return; }
   bool sent = mqtt.beginPublish(frameTopic.c_str(), frame->len, false);
   if (sent) {
-    for (size_t offset = 0; offset < frame->len; offset += 1024) {
-      size_t length = min((size_t)1024, frame->len - offset);
+    for (size_t offset = 0; offset < frame->len; offset += 512) {
+      size_t length = min((size_t)512, frame->len - offset);
       if (mqtt.write(frame->buf + offset, length) != length) { sent = false; break; }
-      delay(0);
+      yield();
     }
     if (sent) sent = mqtt.endPublish();
   }
   Serial.printf("[FRAME] %u bytes: %s\n", frame->len, sent ? "sent" : "failed");
   esp_camera_fb_return(frame);
+  // Recover from a partial TLS write instead of remaining stuck in a
+  // connection that only appears alive to PubSubClient.
+  if (!sent) mqtt.disconnect();
 }
 
 void setup() {
@@ -82,6 +85,7 @@ void setup() {
   frameTopic = String("robot-arm/") + MQTT_DEVICE_ID + "/camera/frame";
   statusTopic = String("robot-arm/") + MQTT_DEVICE_ID + "/camera/status";
   WiFi.mode(WIFI_STA); WiFi.setAutoReconnect(true); WiFi.persistent(false);
+  WiFi.setSleep(false);
   mqttNetwork.setInsecure();
   mqtt.setServer(MQTT_HOST, MQTT_PORT); mqtt.setKeepAlive(30); mqtt.setSocketTimeout(15);
   connectWifi();
