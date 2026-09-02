@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision'
 
 const MODEL='https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'
-const WASM='https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm'
+const WASM='https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.35/wasm'
 const API=(import.meta.env.VITE_API_URL||'').replace(/\/$/,'')
 const url=p=>`${API}${p}`
 const LINKS=[[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]]
@@ -22,7 +22,28 @@ export default function App(){
  function toggleLanguage(){const next=language==='bn'?'en':'bn';setLanguage(next);localStorage.setItem('researchLanguage',next);document.documentElement.lang=next}
  const controllerUrl=useRef(localStorage.getItem('controllerUrl')||'http://192.168.0.40')
  const process=useCallback((result,now)=>{const p=result.landmarks?.[0];draw(canvas.current,video.current,p);setHand(Boolean(p));if(p){setTarget(estimate(p));setConfidence(Math.round((result.handednesses?.[0]?.[0]?.score||0)*100))}frames.current.n++;if(now-frames.current.t>600){setFps(Math.round(frames.current.n*1000/(now-frames.current.t||1000)));frames.current={n:0,t:now}}},[])
- async function start(){setLoading(true);setError('');try{if(!window.isSecureContext)throw new Error('ক্যামেরার জন্য HTTPS অথবা localhost ব্যবহার করুন।');const vision=await FilesetResolver.forVisionTasks(WASM);detector.current?.close();detector.current=await HandLandmarker.createFromOptions(vision,{baseOptions:{modelAssetPath:MODEL,delegate:'GPU'},runningMode:'VIDEO',numHands:1,minHandDetectionConfidence:.6,minTrackingConfidence:.6});const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false});video.current.srcObject=stream;await video.current.play();live.current=true;setRunning(true);frames.current={n:0,t:performance.now()};const loop=now=>{if(!live.current)return;process(detector.current.detectForVideo(video.current,now),now);raf.current=requestAnimationFrame(loop)};raf.current=requestAnimationFrame(loop)}catch(e){setError(e.message||'ক্যামেরা চালু করা যায়নি।')}finally{setLoading(false)}}
+ async function start(){
+  setLoading(true);setError('')
+  try{
+   if(!window.isSecureContext)throw new Error('Camera চালাতে HTTPS অথবা localhost প্রয়োজন।')
+   if(!navigator.mediaDevices?.getUserMedia)throw new Error('এই browser camera access support করে না। Chrome/Edge ব্যবহার করুন।')
+   const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false})
+   video.current.srcObject=stream;await video.current.play()
+   const vision=await FilesetResolver.forVisionTasks(WASM);detector.current?.close()
+   const options=delegate=>({baseOptions:{modelAssetPath:MODEL,...(delegate?{delegate}:{})},runningMode:'VIDEO',numHands:1,minHandDetectionConfidence:.5,minHandPresenceConfidence:.5,minTrackingConfidence:.5})
+   try{detector.current=await HandLandmarker.createFromOptions(vision,options('GPU'))}
+   catch{detector.current=await HandLandmarker.createFromOptions(vision,options())}
+   live.current=true;setRunning(true);frames.current={n:0,t:performance.now()}
+   const loop=now=>{
+    if(!live.current)return
+    try{if(video.current.readyState>=2)process(detector.current.detectForVideo(video.current,now),now)}
+    catch(e){setError(`MediaPipe frame error: ${e.message}`);stop();return}
+    raf.current=requestAnimationFrame(loop)
+   }
+   raf.current=requestAnimationFrame(loop)
+  }catch(e){video.current?.srcObject?.getTracks().forEach(t=>t.stop());setError(`MediaPipe চালু হয়নি: ${e.message||'Unknown error'}`)}
+  finally{setLoading(false)}
+ }
  function stop(){live.current=false;cancelAnimationFrame(raf.current);video.current?.srcObject?.getTracks().forEach(t=>t.stop());setRunning(false);setHand(false);setFps(0)}
  async function move(){setBusy(true);setMessage('Command পাঠানো হচ্ছে…');try{const q=new URLSearchParams({controller:controllerUrl.current,...Object.fromEntries(Object.entries(angles).map(([k,v])=>[k,String(v)]))});const r=await fetch(url(`/api/servo?${q}`),{signal:AbortSignal.timeout(9000)});if(!r.ok)throw new Error();setController(true);setMessage('Position command সম্পন্ন হয়েছে')}catch{setController(false);setMessage('Controller সাড়া দিচ্ছে না')}finally{setBusy(false)}}
  useEffect(()=>{const check=async()=>{try{const q=new URLSearchParams({controller:controllerUrl.current});const r=await fetch(url(`/api/device-status?${q}`),{signal:AbortSignal.timeout(2200),cache:'no-store'});setController(Boolean((await r.json()).online))}catch{setController(false)}};check();const id=setInterval(check,3500);return()=>clearInterval(id)},[])
@@ -46,6 +67,7 @@ export default function App(){
   const nodes=[];const walker=document.createTreeWalker(document.querySelector('.site'),NodeFilter.SHOW_TEXT);while(walker.nextNode())nodes.push(walker.currentNode)
   nodes.forEach(node=>{const original=node.parentElement?.dataset?.bnText||node.nodeValue;if(node.parentElement&&!node.parentElement.dataset.bnText)node.parentElement.dataset.bnText=original;node.nodeValue=language==='en'?(english[original]||original):original})
  },[language])
+ useEffect(()=>{document.title='Worldwide Communication · 3-DOF Vision-Controlled Robotic Arm';const heading=document.querySelector('.hero .kicker');if(heading)heading.textContent='WORLDWIDE COMMUNICATION · 3-DOF TELEOPERATION'},[language])
  return <div className="site">
   <nav><a className="brand" href="#top"><span>R³</span><b>HAND//ARM LAB</b></a><div className="navlinks"><a href="#method">Method</a><a href="#experiment">Experiment</a><a href="#prototype">Prototype</a></div><div className="nav-actions"><button type="button" className="language-toggle" onClick={toggleLanguage} aria-label="Switch between Bangla and English"><b>{language==='bn'?'EN':'বাং'}</b><span>{language==='bn'?'English':'বাংলা'}</span></button><Pill active={controller}>{controller?'SYSTEM ONLINE':'LAB MODE'}</Pill></div></nav>
   <header id="top" className="hero"><div className="hero-copy"><p className="kicker">RESEARCH PROTOTYPE · 3-DOF TELEOPERATION</p><h1>হাতের ইশারায়<br/><em>নিরাপদ রোবটিক নিয়ন্ত্রণ।</em></h1><p className="lead">Mobile Web MediaPipe, monocular 3D position estimation এবং latency-aware adaptive scaling ব্যবহার করে rotating-base 3-DOF robotic arm teleoperation framework.</p><div className="hero-actions"><a className="button" href="#prototype">Live prototype</a><a className="text-link" href="#experiment">Research design <span>↗</span></a></div></div><div className="hero-visual"><div className="grid-orbit"/><div className="arm base"/><div className="arm upper"/><div className="joint j1">q₁</div><div className="joint j2">q₂</div><div className="arm fore"/><div className="joint j3">q₃</div><div className="endpoint">●</div><span className="axis ax">X</span><span className="axis ay">Y</span><span className="axis az">Z</span><div className="joint-key"><span>q₁ · ROTATING BASE</span><span>q₂ · SHOULDER</span><span>q₃ · ELBOW</span><b>NO GRIPPER</b></div><div className="visual-tag"><i/> TARGET POSITION<br/><b>X 18 · Y 24 · Z 31 cm</b></div></div></header>
