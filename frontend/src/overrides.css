@@ -1,1 +1,5 @@
-/* Reserved for experiment-specific UI overrides. */
+/* Physical arm: rotating base + shoulder + elbow; no gripper. */
+.endpoint{position:absolute;left:414px;bottom:210px;color:var(--lime);font-size:1.8rem;text-shadow:0 0 0 8px var(--dark)}
+.joint-key{position:absolute;right:18px;top:20px;display:flex;flex-direction:column;gap:5px;padding:11px;background:#f8faf4dd;border:1px solid #bec7ba;font:600 .52rem 'IBM Plex Mono';color:#536058}
+.joint-key b{margin-top:3px;color:#965151}
+@media(max-width:700px){.joint-key{right:10px;top:auto;bottom:10px}.endpoint{left:350px}}
