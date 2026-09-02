@@ -14,14 +14,33 @@ const Metric=({value,label,unit=''})=><div className="metric"><strong>{value}<sm
 
 export default function App(){
  const video=useRef(null),canvas=useRef(null),detector=useRef(null),raf=useRef(0),live=useRef(false),frames=useRef({n:0,t:0})
+ const autoRef=useRef(false),autoSending=useRef(false),lastAutoSent=useRef(0),lastHandSeen=useRef(0),commanded=useRef({base:90,shoulder:90,elbow:90})
  const [running,setRunning]=useState(false),[loading,setLoading]=useState(false),[error,setError]=useState(''),[hand,setHand]=useState(false)
  const [target,setTarget]=useState({x:0,y:0,z:0}),[fps,setFps]=useState(0),[confidence,setConfidence]=useState(0)
  const [controller,setController]=useState(false),[camera,setCamera]=useState(false),[camTick,setCamTick]=useState(0)
  const [angles,setAngles]=useState({base:90,shoulder:90,elbow:90}),[busy,setBusy]=useState(false),[message,setMessage]=useState('')
+ const [autoControl,setAutoControl]=useState(false),[autoStatus,setAutoStatus]=useState('Hand control disabled')
  const [language,setLanguage]=useState(()=>localStorage.getItem('researchLanguage')||'bn')
  function toggleLanguage(){const next=language==='bn'?'en':'bn';setLanguage(next);localStorage.setItem('researchLanguage',next);document.documentElement.lang=next}
  const controllerUrl=useRef(localStorage.getItem('controllerUrl')||'http://192.168.0.40')
- const process=useCallback((result,now)=>{const p=result.landmarks?.[0];draw(canvas.current,video.current,p);setHand(Boolean(p));if(p){setTarget(estimate(p));setConfidence(Math.round((result.handednesses?.[0]?.[0]?.score||0)*100))}frames.current.n++;if(now-frames.current.t>600){setFps(Math.round(frames.current.n*1000/(now-frames.current.t||1000)));frames.current={n:0,t:now}}},[])
+ const process=useCallback((result,now)=>{const p=result.landmarks?.[0];draw(canvas.current,video.current,p);setHand(Boolean(p));if(p){lastHandSeen.current=now;setTarget(estimate(p));setConfidence(Math.round((result.handednesses?.[0]?.[0]?.score||0)*100));if(autoRef.current)sendHandCommand(p,now)}else if(autoRef.current&&now-lastHandSeen.current>700){autoRef.current=false;setAutoControl(false);setAutoStatus('Tracking lost — servos held at last safe position')}frames.current.n++;if(now-frames.current.t>600){setFps(Math.round(frames.current.n*1000/(now-frames.current.t||1000)));frames.current={n:0,t:now}}},[])
+ function clamp(value,min,max){return Math.min(max,Math.max(min,value))}
+ function limited(current,target){const delta=clamp(target-current,-6,6);return Math.round(current+delta)}
+ async function sendHandCommand(points,now){
+  if(now-lastAutoSent.current<350||autoSending.current)return
+  const palm=Math.hypot(points[5].x-points[17].x,points[5].y-points[17].y)
+  const desired={base:clamp(Math.round(170-points[0].x*160),10,170),shoulder:clamp(Math.round(150-(points[0].y-.15)*171),30,150),elbow:clamp(Math.round(40+(palm-.07)*500),40,150)}
+  const next=Object.fromEntries(Object.keys(desired).map(key=>[key,limited(commanded.current[key],desired[key])]))
+  if(Object.keys(next).every(key=>Math.abs(next[key]-commanded.current[key])<2))return
+  lastAutoSent.current=now;autoSending.current=true;commanded.current=next;setAngles(next);setAutoStatus(`LIVE · B ${next.base}° · S ${next.shoulder}° · E ${next.elbow}°`)
+  try{const q=new URLSearchParams({controller:controllerUrl.current,...Object.fromEntries(Object.entries(next).map(([k,v])=>[k,String(v)]))});const response=await fetch(url(`/api/servo?${q}`),{signal:AbortSignal.timeout(2500)});if(!response.ok)throw new Error(`HTTP ${response.status}`);setController(true)}catch(e){autoRef.current=false;setAutoControl(false);setAutoStatus(`Control stopped · ${e.message}`)}finally{autoSending.current=false}
+ }
+ function toggleAutoControl(){
+  if(autoRef.current){autoRef.current=false;setAutoControl(false);setAutoStatus('Hand control disabled — servos holding');return}
+  if(!running){setAutoStatus('Start MediaPipe camera first');return}
+  if(!controller){setAutoStatus('ESP controller is offline');return}
+  commanded.current={...angles};lastHandSeen.current=performance.now();autoRef.current=true;setAutoControl(true);setAutoStatus('Enabled — show one hand inside the frame')
+ }
  async function start(){
   setLoading(true);setError('')
   try{
@@ -44,7 +63,7 @@ export default function App(){
   }catch(e){video.current?.srcObject?.getTracks().forEach(t=>t.stop());setError(`MediaPipe চালু হয়নি: ${e.message||'Unknown error'}`)}
   finally{setLoading(false)}
  }
- function stop(){live.current=false;cancelAnimationFrame(raf.current);video.current?.srcObject?.getTracks().forEach(t=>t.stop());setRunning(false);setHand(false);setFps(0)}
+ function stop(){autoRef.current=false;setAutoControl(false);setAutoStatus('Camera stopped — servos holding');live.current=false;cancelAnimationFrame(raf.current);video.current?.srcObject?.getTracks().forEach(t=>t.stop());setRunning(false);setHand(false);setFps(0)}
  async function move(){setBusy(true);setMessage('Command পাঠানো হচ্ছে…');try{const q=new URLSearchParams({controller:controllerUrl.current,...Object.fromEntries(Object.entries(angles).map(([k,v])=>[k,String(v)]))});const r=await fetch(url(`/api/servo?${q}`),{signal:AbortSignal.timeout(9000)});if(!r.ok)throw new Error();setController(true);setMessage('Position command সম্পন্ন হয়েছে')}catch{setController(false);setMessage('Controller সাড়া দিচ্ছে না')}finally{setBusy(false)}}
  useEffect(()=>{const check=async()=>{try{const q=new URLSearchParams({controller:controllerUrl.current});const r=await fetch(url(`/api/device-status?${q}`),{signal:AbortSignal.timeout(2200),cache:'no-store'});setController(Boolean((await r.json()).online))}catch{setController(false)}};check();const id=setInterval(check,3500);return()=>clearInterval(id)},[])
  useEffect(()=>{const check=async()=>{try{const r=await fetch(url('/api/camera-status'),{cache:'no-store'});const d=await r.json();setCamera(Boolean(d.online));if(d.online)setCamTick(Date.now())}catch{setCamera(false)}};check();const id=setInterval(check,700);return()=>clearInterval(id)},[])
@@ -69,6 +88,7 @@ export default function App(){
  },[language])
  useEffect(()=>{document.title='Worldwide Communication · 3-DOF Vision-Controlled Robotic Arm';const heading=document.querySelector('.hero .kicker');if(heading)heading.textContent='WORLDWIDE COMMUNICATION · 3-DOF TELEOPERATION'},[language])
  return <div className="site">
+  <aside className={`control-dock ${autoControl?'enabled':''}`}><div><span><i/>MEDIAPIPE → SERVO</span><b>{autoStatus}</b></div><button type="button" onClick={toggleAutoControl}>{autoControl?'Disable / Hold':'Enable Hand Control'}</button><small>X → Base&nbsp;&nbsp; Y → Shoulder&nbsp;&nbsp; Distance → Elbow</small></aside>
   <nav><a className="brand" href="#top"><span>R³</span><b>HAND//ARM LAB</b></a><div className="navlinks"><a href="#method">Method</a><a href="#experiment">Experiment</a><a href="#prototype">Prototype</a></div><div className="nav-actions"><button type="button" className="language-toggle" onClick={toggleLanguage} aria-label="Switch between Bangla and English"><b>{language==='bn'?'EN':'বাং'}</b><span>{language==='bn'?'English':'বাংলা'}</span></button><Pill active={controller}>{controller?'SYSTEM ONLINE':'LAB MODE'}</Pill></div></nav>
   <header id="top" className="hero"><div className="hero-copy"><p className="kicker">RESEARCH PROTOTYPE · 3-DOF TELEOPERATION</p><h1>হাতের ইশারায়<br/><em>নিরাপদ রোবটিক নিয়ন্ত্রণ।</em></h1><p className="lead">Mobile Web MediaPipe, monocular 3D position estimation এবং latency-aware adaptive scaling ব্যবহার করে rotating-base 3-DOF robotic arm teleoperation framework.</p><div className="hero-actions"><a className="button" href="#prototype">Live prototype</a><a className="text-link" href="#experiment">Research design <span>↗</span></a></div></div><div className="hero-visual"><div className="grid-orbit"/><div className="arm base"/><div className="arm upper"/><div className="joint j1">q₁</div><div className="joint j2">q₂</div><div className="arm fore"/><div className="joint j3">q₃</div><div className="endpoint">●</div><span className="axis ax">X</span><span className="axis ay">Y</span><span className="axis az">Z</span><div className="joint-key"><span>q₁ · ROTATING BASE</span><span>q₂ · SHOULDER</span><span>q₃ · ELBOW</span><b>NO GRIPPER</b></div><div className="visual-tag"><i/> TARGET POSITION<br/><b>X 18 · Y 24 · Z 31 cm</b></div></div></header>
   <section className="summary-strip"><div><small>RESEARCH QUESTION</small><p>Adaptive scaling ও latency compensation কি fixed mapping-এর তুলনায় accuracy এবং safety উন্নত করে?</p></div><Metric value="03" label="ARM DOF"/><Metric value="21" label="HAND LANDMARKS"/><Metric value="04" label="TEST CONDITIONS"/></section>
