@@ -1,4 +1,4 @@
-# React Robot Arm Vision Control
+
 
 সম্পূর্ণ বাংলা setup, architecture, API, deployment ও troubleshooting guide: [PROJECT_DOCUMENTATION_BN.md](PROJECT_DOCUMENTATION_BN.md)
 
