@@ -30,7 +30,7 @@ void smoothMove(Servo &servo, int &currentPos, int targetPos) {
   while (currentPos != targetPos) {
     currentPos += stepValue;
     servo.write(currentPos);
-    delay(10);
+    delay(4);  // Faster motion: approximately 2.5x the previous step rate
     yield();
   }
 }
