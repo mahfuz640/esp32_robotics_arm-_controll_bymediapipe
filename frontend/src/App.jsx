@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { FilesetResolver, HandLandmarker } from '@mediapipe/tasks-vision'
+import * as THREE from 'three'
+import { gsap } from 'gsap'
+import { ScrollTrigger } from 'gsap/ScrollTrigger'
+
+gsap.registerPlugin(ScrollTrigger)
 
 const MODEL='https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'
 const WASM='https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22-rc.20250304/wasm'
@@ -11,6 +16,34 @@ function draw(canvas,video,pts){const w=video.videoWidth,h=video.videoHeight;if(
 function estimate(p){if(!p)return null;const palm=Math.hypot(p[5].x-p[17].x,p[5].y-p[17].y);return{x:Math.round((.5-p[0].x)*48),y:Math.round((.72-p[0].y)*42),z:Math.round(Math.min(36,Math.max(10,4.6/Math.max(palm,.04))))}}
 const Pill=({active,children})=><span className={`pill ${active?'active':''}`}><i/>{children}</span>
 const Metric=({value,label,unit=''})=><div className="metric"><strong>{value}<small>{unit}</small></strong><span>{label}</span></div>
+
+function mountThreeArm(host){
+ const scene=new THREE.Scene(),camera=new THREE.PerspectiveCamera(36,1,.1,100)
+ camera.position.set(7,5.4,9);camera.lookAt(0,2,0)
+ const renderer=new THREE.WebGLRenderer({alpha:true,antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.setClearColor(0x000000,0);renderer.domElement.className='three-arm';host.prepend(renderer.domElement)
+ scene.add(new THREE.HemisphereLight(0xf7ffe8,0x758273,2.7));const key=new THREE.DirectionalLight(0xffffff,4);key.position.set(5,8,6);scene.add(key)
+ const dark=new THREE.MeshStandardMaterial({color:0x17221b,roughness:.3,metalness:.62}),lime=new THREE.MeshStandardMaterial({color:0x9dfb53,roughness:.25,metalness:.2}),ghost=new THREE.MeshBasicMaterial({color:0x9dfb53,wireframe:true,transparent:true,opacity:.2})
+ const floor=new THREE.GridHelper(12,18,0x8d9d8e,0xc9d1c6);floor.position.y=-.05;scene.add(floor)
+ const basePivot=new THREE.Group();scene.add(basePivot)
+ const pedestal=new THREE.Mesh(new THREE.CylinderGeometry(1.05,1.25,.55,40),dark);pedestal.position.y=.27;basePivot.add(pedestal)
+ const baseJoint=new THREE.Mesh(new THREE.CylinderGeometry(.58,.58,.52,32),lime);baseJoint.position.y=.72;basePivot.add(baseJoint)
+ const shoulder=new THREE.Group();shoulder.position.y=.84;basePivot.add(shoulder)
+ const jointGeo=new THREE.CylinderGeometry(.46,.46,.55,32);jointGeo.rotateX(Math.PI/2)
+ const j2=new THREE.Mesh(jointGeo,lime);shoulder.add(j2)
+ const upper=new THREE.Mesh(new THREE.BoxGeometry(3.25,.48,.58),dark);upper.position.x=1.62;shoulder.add(upper)
+ const elbow=new THREE.Group();elbow.position.x=3.25;shoulder.add(elbow);elbow.add(new THREE.Mesh(jointGeo,lime))
+ const fore=new THREE.Mesh(new THREE.BoxGeometry(2.65,.42,.5),dark);fore.position.x=1.32;elbow.add(fore)
+ const end=new THREE.Mesh(new THREE.SphereGeometry(.28,24,16),lime);end.position.x=2.65;elbow.add(end)
+ const workspace=new THREE.Mesh(new THREE.SphereGeometry(4.8,28,18,0,Math.PI*2,0,Math.PI*.52),ghost);workspace.position.y=.8;scene.add(workspace)
+ const target=new THREE.Mesh(new THREE.TorusGeometry(.27,.07,12,28),lime);target.position.set(3.5,3.3,.3);target.rotation.x=Math.PI/2;scene.add(target)
+ shoulder.rotation.z=.68;elbow.rotation.z=-1.12
+ const timeline=gsap.timeline({repeat:-1,yoyo:true,defaults:{duration:2.8,ease:'sine.inOut'}});timeline.to(basePivot.rotation,{y:.55},0).to(shoulder.rotation,{z:.94},0).to(elbow.rotation,{z:-1.55},0).to(target.position,{x:2.8,y:4,z:-.7},0)
+ let mx=0,my=0,frame
+ const pointer=e=>{const r=host.getBoundingClientRect();mx=((e.clientX-r.left)/r.width-.5);my=((e.clientY-r.top)/r.height-.5)};host.addEventListener('pointermove',pointer)
+ const resize=()=>{const w=host.clientWidth,h=host.clientHeight;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix()};const observer=new ResizeObserver(resize);observer.observe(host);resize()
+ const render=()=>{camera.position.x+=(7+mx*1.5-camera.position.x)*.035;camera.position.y+=(5.4-my-camera.position.y)*.035;camera.lookAt(0,2,0);renderer.render(scene,camera);frame=requestAnimationFrame(render)};render()
+ return()=>{cancelAnimationFrame(frame);timeline.kill();observer.disconnect();host.removeEventListener('pointermove',pointer);renderer.dispose();renderer.domElement.remove();scene.traverse(o=>{o.geometry?.dispose();if(o.material){(Array.isArray(o.material)?o.material:[o.material]).forEach(m=>m.dispose())}})}
+}
 
 export default function App(){
  const video=useRef(null),canvas=useRef(null),detector=useRef(null),raf=useRef(0),live=useRef(false),frames=useRef({n:0,t:0})
@@ -27,6 +60,14 @@ export default function App(){
  async function move(){setBusy(true);setMessage('Command পাঠানো হচ্ছে…');try{const q=new URLSearchParams({controller:controllerUrl.current,...Object.fromEntries(Object.entries(angles).map(([k,v])=>[k,String(v)]))});const r=await fetch(url(`/api/servo?${q}`),{signal:AbortSignal.timeout(9000)});if(!r.ok)throw new Error();setController(true);setMessage('Position command সম্পন্ন হয়েছে')}catch{setController(false);setMessage('Controller সাড়া দিচ্ছে না')}finally{setBusy(false)}}
  useEffect(()=>{const check=async()=>{try{const q=new URLSearchParams({controller:controllerUrl.current});const r=await fetch(url(`/api/device-status?${q}`),{signal:AbortSignal.timeout(2200),cache:'no-store'});setController(Boolean((await r.json()).online))}catch{setController(false)}};check();const id=setInterval(check,3500);return()=>clearInterval(id)},[])
  useEffect(()=>{const check=async()=>{try{const r=await fetch(url('/api/camera-status'),{cache:'no-store'});const d=await r.json();setCamera(Boolean(d.online));if(d.online)setCamTick(Date.now())}catch{setCamera(false)}};check();const id=setInterval(check,700);return()=>clearInterval(id)},[])
+ useEffect(()=>{const host=document.querySelector('.hero-visual');if(!host)return;return mountThreeArm(host)},[])
+ useEffect(()=>{const context=gsap.context(()=>{
+  gsap.from('.hero-copy > *',{y:38,opacity:0,duration:.9,stagger:.11,ease:'power3.out'})
+  gsap.from('.hero-visual',{scale:.94,opacity:0,duration:1.15,ease:'power3.out'})
+  gsap.utils.toArray('.section-intro, .section-title, .prototype-head, .paper > div').forEach(el=>gsap.from(el,{scrollTrigger:{trigger:el,start:'top 82%',once:true},y:55,opacity:0,duration:.85,ease:'power3.out'}))
+  gsap.utils.toArray('.pipeline article, .conditions > div, .paper li').forEach(el=>gsap.from(el,{scrollTrigger:{trigger:el,start:'top 90%',once:true},x:-24,opacity:0,duration:.55,ease:'power2.out'}))
+  gsap.from('.metric',{scrollTrigger:{trigger:'.summary-strip',start:'top 88%',once:true},y:22,opacity:0,stagger:.1,duration:.55})
+ },document.querySelector('.site'));return()=>context.revert()},[])
  useEffect(()=>()=>{live.current=false;cancelAnimationFrame(raf.current);video.current?.srcObject?.getTracks().forEach(t=>t.stop());detector.current?.close()},[])
  useEffect(()=>{
   const english={
