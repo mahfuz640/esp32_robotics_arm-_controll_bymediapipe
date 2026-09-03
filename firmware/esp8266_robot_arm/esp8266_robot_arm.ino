@@ -15,6 +15,10 @@ const uint8_t SHOULDER_PIN = D2;  // GPIO4
 const uint8_t ELBOW_PIN = D5;     // GPIO14
 
 int basePos = 90, shoulderPos = 90, elbowPos = 90;
+int baseTarget = 90, shoulderTarget = 90, elbowTarget = 90;
+unsigned long lastServoStep = 0;
+const uint8_t SERVO_STEP_MS = 12;
+const uint8_t SERVO_DEADBAND = 2;
 bool wifiWasConnected = false;
 unsigned long lastStatusPrint = 0;
 unsigned long lastReconnect = 0;
@@ -23,16 +27,25 @@ unsigned long lastHeartbeat = 0;
 String mqttCommandTopic;
 String mqttStatusTopic;
 
-void smoothMove(Servo &servo, int &currentPos, int targetPos) {
-  targetPos = constrain(targetPos, 0, 180);
-  if (currentPos == targetPos) return;
-  int stepValue = targetPos > currentPos ? 1 : -1;
-  while (currentPos != targetPos) {
-    currentPos += stepValue;
-    servo.write(currentPos);
-    delay(4);  // Faster motion: approximately 2.5x the previous step rate
-    yield();
-  }
+void setServoTargets(int base, int shoulder, int elbow) {
+  baseTarget = constrain(base, 0, 180);
+  shoulderTarget = constrain(shoulder, 0, 180);
+  elbowTarget = constrain(elbow, 0, 180);
+}
+
+void stepServo(Servo &servo, int &currentPos, int targetPos) {
+  int difference = targetPos - currentPos;
+  if (abs(difference) <= SERVO_DEADBAND) return;
+  currentPos += difference > 0 ? 1 : -1;
+  servo.write(currentPos);
+}
+
+void updateServos() {
+  if (millis() - lastServoStep < SERVO_STEP_MS) return;
+  lastServoStep = millis();
+  stepServo(servoBase, basePos, baseTarget);
+  stepServo(servoShoulder, shoulderPos, shoulderTarget);
+  stepServo(servoElbow, elbowPos, elbowTarget);
 }
 
 void applyGesture(const int f[5], const String &dir) {
@@ -41,27 +54,25 @@ void applyGesture(const int f[5], const String &dir) {
 
   if (allOpen) {
     Serial.println("[ACTION] All open -> HOME");
-    smoothMove(servoBase, basePos, 90);
-    smoothMove(servoShoulder, shoulderPos, 90);
-    smoothMove(servoElbow, elbowPos, 90);
+    setServoTargets(90, 90, 90);
   } else if (allClosed && dir == "right") {
     Serial.println("[ACTION] Fist + right -> BASE 180");
-    smoothMove(servoBase, basePos, 180);
+    baseTarget = 180;
   } else if (allClosed && dir == "left") {
     Serial.println("[ACTION] Fist + left -> BASE 0");
-    smoothMove(servoBase, basePos, 0);
+    baseTarget = 0;
   } else if (!f[0] && f[1] && !f[2] && !f[3] && !f[4]) {
     Serial.println("[ACTION] Index -> SHOULDER 90");
-    smoothMove(servoShoulder, shoulderPos, 90);
+    shoulderTarget = 90;
   } else if (!f[0] && f[1] && f[2] && !f[3] && !f[4]) {
     Serial.println("[ACTION] Index + middle -> SHOULDER 40");
-    smoothMove(servoShoulder, shoulderPos, 40);
+    shoulderTarget = 40;
   } else if (!f[0] && !f[1] && !f[2] && f[3] && !f[4]) {
     Serial.println("[ACTION] Ring -> ELBOW 0");
-    smoothMove(servoElbow, elbowPos, 0);
+    elbowTarget = 0;
   } else if (!f[0] && !f[1] && !f[2] && !f[3] && f[4]) {
     Serial.println("[ACTION] Pinky -> ELBOW 140");
-    smoothMove(servoElbow, elbowPos, 140);
+    elbowTarget = 140;
   } else {
     Serial.println("[ACTION] Pattern has no assigned movement");
   }
@@ -125,9 +136,7 @@ void handleServo() {
   Serial.print("[MANUAL] Base="); Serial.print(targetBase);
   Serial.print(" Shoulder="); Serial.print(targetShoulder);
   Serial.print(" Elbow="); Serial.println(targetElbow);
-  smoothMove(servoBase, basePos, targetBase);
-  smoothMove(servoShoulder, shoulderPos, targetShoulder);
-  smoothMove(servoElbow, elbowPos, targetElbow);
+  setServoTargets(targetBase, targetShoulder, targetElbow);
   server.send(200, "application/json", String("{\"ok\":true,\"base\":") + basePos + ",\"shoulder\":" + shoulderPos + ",\"elbow\":" + elbowPos + "}");
   Serial.println("[MANUAL] Movement complete");
 }
@@ -176,9 +185,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       int targetShoulder = constrain(command.substring(first + 1, second).toInt(), 0, 180);
       int targetElbow = constrain(command.substring(second + 1).toInt(), 0, 180);
       Serial.printf("[MQTT MANUAL] Base=%d Shoulder=%d Elbow=%d\n", targetBase, targetShoulder, targetElbow);
-      smoothMove(servoBase, basePos, targetBase);
-      smoothMove(servoShoulder, shoulderPos, targetShoulder);
-      smoothMove(servoElbow, elbowPos, targetElbow);
+      setServoTargets(targetBase, targetShoulder, targetElbow);
     } else Serial.println("[MQTT] Invalid servo command");
   } else Serial.println("[MQTT] Unknown command");
   publishMqttStatus(true);
@@ -279,6 +286,7 @@ void setup() {
 void loop() {
   server.handleClient();
   handleSerial();
+  updateServos();
   printNetworkStatus();
   maintainMqtt();
 }
